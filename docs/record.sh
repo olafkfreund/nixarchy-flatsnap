@@ -195,7 +195,7 @@ fi
 
 # ---- encode and gate ------------------------------------------------------
 NIXARCHY_SRC=${NIXARCHY_SRC:-$(nix flake prefetch --json github:olafkfreund/nixarchy | jq -r .storePath)}
-[ -x "$NIXARCHY_SRC/tests/demo/encode-gif.sh" ] || die "no encode-gif.sh under $NIXARCHY_SRC"
+[ -f "$NIXARCHY_SRC/tests/demo/encode-gif.sh" ] || die "no encode-gif.sh under $NIXARCHY_SRC"
 
 # The build log, cut to its first and last 3 s: the rebuild in between is
 # nixos-rebuild, not this plugin, and the caption says it was shortened.
@@ -211,8 +211,8 @@ run mkdir -p "$OUT/frames"
 run ffmpeg -hide_banner -loglevel error -i "$OUT/raw.mp4" \
   -vf "select='not(between(t,$cut_from,$cut_to)+between(t,$cut2_from,$cut2_to))',setpts=N/FRAME_RATE/TB,fps=4,mpdecimate" \
   -fps_mode vfr "$OUT/frames/%04d.png"
-run "$NIXARCHY_SRC/tests/demo/encode-gif.sh" "$OUT/frames" "$OUT/flatsnap.gif"
-run "$NIXARCHY_SRC/tests/demo/verify-frames.sh" "$OUT/flatsnap.gif" \
+run bash "$NIXARCHY_SRC/tests/demo/encode-gif.sh" "$OUT/frames" "$OUT/flatsnap.gif"
+run bash "$NIXARCHY_SRC/tests/demo/verify-frames.sh" "$OUT/flatsnap.gif" \
   --expect Calculator --expect Flatpak --expect applied \
   --forbid 'error|failed|refused' --max-bytes 1000000 --dump "$OUT/verify"
 
