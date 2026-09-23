@@ -34,6 +34,10 @@ die() { printf 'record.sh: %s\n' "$*" >&2; exit 1; }
 run() { if [ "$DRY" = 1 ]; then printf 'would: %s\n' "$*"; else "$@"; fi; }
 hold() { run sleep "$1"; }
 keys() { run wtype -d 40 "$@"; }
+# Hyprland's Lua dispatch first, the old form second -- the way Omarchy's own
+# scripts do it; the old form alone is a parse error on a Lua config.
+workspace() { run hyprctl dispatch "hl.dsp.focus({ workspace = \"$1\" })" >/dev/null 2>&1 ||
+  run hyprctl dispatch workspace "$1"; }
 
 # ---- the session's handles ------------------------------------------------
 # ssh has none of them; the running shell does.
@@ -80,7 +84,7 @@ cleanup() {
   run omarchy-theme-set "$theme0"
   run omarchy-theme-bg-set "$bg0"
   [ "$(omarchy-shell notifications isDnd)" = "$dnd0" ] || run omarchy-shell notifications toggleDnd
-  run hyprctl dispatch workspace "$ws0"
+  workspace "$ws0"
   # Back to the generation this started on; drop every one made since.
   local -a newer
   mapfile -t newer < <(find /nix/var/nix/profiles -maxdepth 1 -name 'system-*-link' -printf '%f\n' |
@@ -98,7 +102,7 @@ trap cleanup EXIT
 run omarchy-theme-set "Tokyo Night"
 run omarchy-theme-bg-set "$OMARCHY_PATH/themes/tokyo-night/backgrounds/0-winding-road.jpg"
 [ "$dnd0" = on ] || run omarchy-shell notifications toggleDnd
-run hyprctl dispatch workspace "$ws"
+workspace "$ws"
 hold 3
 
 scene() {
