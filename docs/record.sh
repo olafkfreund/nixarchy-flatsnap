@@ -68,6 +68,7 @@ rec_pid=""
 t0=0
 
 cleanup() {
+  local rc=$?
   set +e
   say "clean-up"
   [ -n "$rec_pid" ] && kill -INT "$rec_pid" 2>/dev/null && wait "$rec_pid" 2>/dev/null
@@ -95,6 +96,9 @@ cleanup() {
   run sudo "$PROFILE/bin/switch-to-configuration" boot
   run rm -f "$FS_FILE" "$FS_FILE.bak" "$HOME/.local/state/nixarchy/enabled-once/$PANEL"
   say "left on $(readlink "$PROFILE")"
+  # The trap's own last command must not decide the exit code: a take that
+  # died reports that it died.
+  exit "$rc"
 }
 trap cleanup EXIT
 
@@ -160,7 +164,9 @@ hold 5; keys c           # the next channel it publishes
 hold 2; still 04-snap-card
 keys x                   # arm classic: the warning turns red
 hold 2; still 05-classic-confirm
-keys c c c               # disarms; back round to stable
+# One key per wtype call: `wtype c c` types "c c", and the space between
+# is a key too -- the panel's "any other key disarms" rule sees it.
+keys c; keys c; keys c   # disarms; back round to stable
 hold 1; keys -k Return   # queue it
 hold 2
 
@@ -197,8 +203,8 @@ hold 1
 scene remove
 run omarchy-shell shell toggle "$PANEL" '{}'
 hold 2; keys -k Tab
-hold 1; keys d y
-hold 2; keys d y
+hold 1; keys d; keys y
+hold 2; keys d; keys y
 gen_before=$(readlink "$PROFILE")
 hold 2; keys a
 wait_apply "$gen_before"
