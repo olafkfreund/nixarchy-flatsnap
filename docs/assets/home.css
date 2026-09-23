@@ -1,0 +1,104 @@
+/* The front page only. Loaded after style.css by _layouts/home.html, and kept
+   out of style.css on purpose: that file is a fork of nixarchy's with one
+   marked change, and these rules are not something nixarchy's manual needs.
+   Colours are style.css's tokens and nothing else, so the two can never
+   drift apart in palette. (plan/2026-09-21-36-pages-refresh.md) */
+
+.home-main {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 16px 6rem;
+}
+
+/* Text runs at reading width even where the page around it is wide. */
+.prose { max-width: 46rem; margin-left: auto; margin-right: auto; }
+
+.lede { font-size: 1.1rem; text-align: center; }
+
+.hero video,
+.hero img,
+.scene img,
+.grid3 img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+/* A card is mostly empty below its last row, so a scene shows the part
+   that carries the point: the top (search, tabs, rows, the form), or with
+   .foot the bottom, where the queue count and the apply prompt live. Each
+   links to the whole shot. */
+.scene img {
+  aspect-ratio: 11 / 5;
+  object-fit: cover;
+  object-position: top;
+}
+.scene img.foot { object-position: bottom; }
+.scene a:hover img { border-color: var(--accent); }
+
+.hero { margin: 2rem 0 1rem; }
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem 1.6rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.links a::after { content: " \2192"; }
+
+.home-main h2 {
+  font-size: 1.35rem;
+  line-height: 1.3;
+  margin: 4.5rem 0 0.6rem;
+}
+.home-main h2 + p { color: var(--dim); margin-top: 0; }
+
+.scene {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 1.8rem;
+  align-items: center;
+  margin: 2.4rem 0;
+}
+.scene .step {
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.scene h3 { font-size: 1.1rem; line-height: 1.3; margin: 0.2rem 0 0.6rem; }
+.scene p { margin: 0 0 0.6rem; }
+/* A scene with nothing to show still takes the same rhythm. */
+.scene--text { grid-template-columns: 1fr; max-width: 46rem; }
+
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.2rem;
+  margin-top: 1.4rem;
+}
+.grid3 figure { margin: 0; }
+.grid3 img { aspect-ratio: 11 / 6; object-fit: cover; object-position: top; }
+.grid3 figcaption { color: var(--dim); font-size: 0.85rem; margin-top: 0.4rem; }
+
+.home-foot {
+  margin-top: 4.5rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--rule);
+  color: var(--dim);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .scene, .grid3 { grid-template-columns: 1fr; }
+  .scene { gap: 1rem; }
+  .home-main h2 { margin-top: 3rem; }
+}

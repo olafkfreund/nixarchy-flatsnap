@@ -1,0 +1,19 @@
+{
+  "hits": [
+    {
+      "app_id": "org.gnome.Calculator",
+      "name": "Calculator",
+      "summary": "Perform arithmetic, scientific or financial calculations"
+    },
+    {
+      "app_id": "org.kde.kalk",
+      "name": "Calculator",
+      "summary": "A feature rich calculator"
+    },
+    {
+      "app_id": "dev.edfloreshz.Calculator",
+      "name": "Calculator",
+      "summary": "Beyond the equation"
+    }
+  ]
+}

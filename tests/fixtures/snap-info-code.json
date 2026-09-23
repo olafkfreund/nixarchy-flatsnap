@@ -1,0 +1,21 @@
+{
+  "name": "code",
+  "snap": {
+    "title": "code",
+    "summary": "Code editing. Redefined.",
+    "license": "Proprietary",
+    "publisher": {
+      "display-name": "Visual Studio Code"
+    }
+  },
+  "channel-map": [
+    {
+      "channel": {
+        "name": "stable",
+        "risk": "stable",
+        "track": "latest"
+      },
+      "confinement": "classic"
+    }
+  ]
+}

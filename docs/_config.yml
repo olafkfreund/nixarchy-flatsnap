@@ -1,0 +1,8 @@
+title: nixarchy.flatsnap
+description: Flatpak and Snap apps, from the Omarchy menu, declaratively
+url: "https://olafkfreund.github.io"
+baseurl: "/nixarchy-flatsnap"
+
+# No theme gem. The layout in _layouts/ and assets/*.css are the whole site,
+# copied from nixarchy-pkg (itself arranged like nixarchy's docs/), so the
+# three read as one family.

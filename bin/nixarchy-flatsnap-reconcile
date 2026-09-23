@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# nixarchy-flatsnap-reconcile <plan.json>
+#
+# Run as root by nixarchy-flatsnap-snaps.service. Makes the installed snaps
+# match the declared ones:
+#   - declared and missing        -> snap install
+#   - declared, on another channel -> snap refresh --channel
+#   - installed BY THIS UNIT and no longer declared -> snap remove
+# A snap somebody installed by hand is never removed, even if it was once
+# declared too: only names in $STATE_DIRECTORY/managed are ours to take away.
+#
+# One failure does not stop the rest; the unit exits 1 at the end so
+# `systemctl --failed` shows it.
+set -euo pipefail
+
+plan=$1
+managed="${STATE_DIRECTORY:-/var/lib/nixarchy-flatsnap}/managed"
+touch "$managed"
+
+snap wait system seed.loaded
+
+# name -> tracking channel, e.g. "hello-world latest/stable"
+installed=$(snap list --unicode=never --color=never 2>/dev/null | awk 'NR > 1 { print $1, $4 }')
+is_installed() { awk -v n="$1" '$1 == n { f = 1 } END { exit !f }' <<<"$installed"; }
+tracking() { awk -v n="$1" '$1 == n { print $2 }' <<<"$installed"; }
+is_managed() { grep -qxF "$1" "$managed"; }
+
+failed=0
+
+while IFS=$'\t' read -r name channel classic; do
+  flag=()
+  [ "$classic" = true ] && flag=(--classic)
+  if ! is_installed "$name"; then
+    echo "install $name ($channel${flag[*]:+, classic})"
+    if snap install "$name" --channel="$channel" "${flag[@]}"; then
+      is_managed "$name" || echo "$name" >>"$managed"
+    else
+      failed=1
+    fi
+  elif [ "$(tracking "$name")" != "latest/$channel" ] && [ "$(tracking "$name")" != "$channel" ]; then
+    echo "refresh $name -> $channel"
+    snap refresh "$name" --channel="$channel" "${flag[@]}" || failed=1
+  fi
+done < <(jq -r '.snaps[] | [.name, .channel, (.classic | tostring)] | @tsv' "$plan")
+
+declared=$(jq -r '.snaps[].name' "$plan")
+keep=()
+while read -r name; do
+  [ -n "$name" ] || continue
+  if grep -qxF "$name" <<<"$declared"; then keep+=("$name"); continue; fi
+  if is_installed "$name"; then
+    echo "remove $name"
+    # --purge: snapd's automatic pre-removal snapshot shells out to sudo,
+    # which fails under NixOS PAM ("pam_open_session: Module is unknown"),
+    # so a plain remove never succeeds here. The snap's data goes either
+    # way; --purge only skips the snapshot snapd cannot take on NixOS.
+    if ! snap remove --purge "$name"; then failed=1; keep+=("$name"); fi
+  fi
+done <"$managed"
+printf '%s\n' "${keep[@]}" | grep -v '^$' >"$managed.new" || true
+mv "$managed.new" "$managed"
+
+exit "$failed"

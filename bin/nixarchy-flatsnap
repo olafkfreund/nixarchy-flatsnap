@@ -1,0 +1,442 @@
+#!/usr/bin/env bash
+# nixarchy-flatsnap -- the Flatpak and Snap entries in ~/.config/nixarchy/flatsnap.nix
+#
+# The panel (Menu.qml) only ever runs this with an argv array and reads JSON
+# from stdout, so every rule about what is allowed lives here, once, where
+# tests/cli.sh can reach it. Errors are {"error": "..."} on stdout, exit 2.
+#
+# Pasted text is untrusted. Nothing from it reaches curl, the Nix file or a
+# process argument until it has matched one of the two ID grammars below.
+set -euo pipefail
+
+FP_RE='^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*){2,}$'
+SNAP_RE='^[a-z0-9][a-z0-9-]{0,39}$'
+CHAN_RE='^(stable|candidate|beta|edge)$'
+
+die() { jq -cn --arg e "$1" '{error: $e}'; exit 2; }
+
+# fetch <fixture-name> <url> [curl args...]
+# NIXARCHY_FLATSNAP_OFFLINE=<dir> serves <dir>/<fixture-name> instead, so the
+# tests never touch the network. A missing fixture behaves like a 404.
+fetch() {
+  local name=$1; shift
+  if [ -n "${NIXARCHY_FLATSNAP_OFFLINE:-}" ]; then
+    # The tests read this to prove hostile input never got as far as a lookup.
+    [ -z "${NIXARCHY_FLATSNAP_FETCHLOG:-}" ] || printf '%s\n' "$name" >>"$NIXARCHY_FLATSNAP_FETCHLOG"
+    cat "$NIXARCHY_FLATSNAP_OFFLINE/$name" 2>/dev/null
+    return
+  fi
+  curl -fsS --proto =https --max-time 10 --max-filesize 2M "$@" 2>/dev/null
+}
+
+snap_api() { fetch "$1" "https://api.snapcraft.io/v2/snaps/$2" -H 'Snap-Device-Series: 16'; }
+
+# ---- classify: pasted text -> store, id, channel, classic ---------------
+
+store="" id="" channel="stable" classic=false
+
+classify() {
+  local text=$1
+  # One line, trimmed. Anything longer than a URL has any business being is
+  # not an app reference.
+  text=${text#"${text%%[![:space:]]*}"}
+  text=${text%"${text##*[![:space:]]}"}
+  case $text in *$'\n'*|*$'\r'*) die "one app at a time: paste a single line" ;; esac
+  [ ${#text} -le 512 ] || die "input too long"
+  [ -n "$text" ] || die "nothing to look up"
+
+  local re_flathub='^https://(www\.)?flathub\.org/([A-Za-z_-]{2,8}/)?apps/(details/)?([^/?#]+)/?([?#].*)?$'
+  local re_ref='^https://dl\.flathub\.org/repo/appstream/([^/?#]+)\.flatpakref([?#].*)?$'
+  local re_snapcraft='^https://(www\.)?snapcraft\.io/([^/?#]+)/?([?#].*)?$'
+
+  if [[ $text =~ $re_flathub ]]; then store=flatpak id=${BASH_REMATCH[4]}
+  elif [[ $text =~ $re_ref ]]; then store=flatpak id=${BASH_REMATCH[1]}
+  elif [[ $text =~ $re_snapcraft ]]; then store=snap id=${BASH_REMATCH[2]}
+  elif [[ $text == *.flatpakref* ]]; then
+    die "only Flathub .flatpakref links are supported; other remotes are not in v1"
+  elif [[ $text == http://* ]]; then die "https links only"
+  elif [[ $text == *://* ]]; then die "not a Flathub or Snapcraft link"
+  elif [[ $text == "flatpak install"* || $text == "snap install"* ]]; then
+    parse_install "$text"
+  elif [[ $text =~ $FP_RE ]]; then store=flatpak id=$text
+  elif [[ $text =~ $SNAP_RE ]]; then store=ask id=$text
+  else die "not an app ID, package name, or Flathub/Snapcraft link"
+  fi
+
+  case $store in
+    flatpak) [[ $id =~ $FP_RE ]] || die "not a valid Flatpak app ID" ;;
+    snap|ask) [[ $id =~ $SNAP_RE ]] || die "not a valid snap name" ;;
+  esac
+}
+
+# A pasted `flatpak install ...` / `snap install ...` line. Split on
+# whitespace by read -a, never eval'd; the flags we understand are kept, the
+# rest are refused rather than silently dropped.
+parse_install() {
+  local -a w; read -ra w <<<"$1"
+  local tool=${w[0]} names=() i
+  for ((i = 2; i < ${#w[@]}; i++)); do
+    case ${w[i]} in
+      -y|--assumeyes|--noninteractive|--system) ;;
+      --user) die "per-user Flatpaks are not supported; this installs system-wide" ;;
+      --classic) [ "$tool" = snap ] || die "unknown flag ${w[i]}"; classic=true ;;
+      --stable|--candidate|--beta|--edge)
+        [ "$tool" = snap ] || die "unknown flag ${w[i]}"; channel=${w[i]#--} ;;
+      --channel=*) channel=${w[i]#--channel=} ;;
+      --channel) i=$((i + 1)); channel=${w[i]:-} ;;
+      -*) die "unknown flag ${w[i]}" ;;
+      *) names+=("${w[i]}") ;;
+    esac
+  done
+  [[ $channel =~ $CHAN_RE ]] || die "channel must be stable, candidate, beta or edge"
+  if [ "$tool" = flatpak ]; then
+    # `flatpak install flathub <id>`: the remote is optional, and only Flathub.
+    if [ ${#names[@]} -eq 2 ]; then
+      [ "${names[0]}" = flathub ] || die "only the flathub remote is supported"
+      names=("${names[1]}")
+    fi
+    store=flatpak
+  else
+    store=snap
+  fi
+  [ ${#names[@]} -eq 1 ] || die "one app at a time"
+  id=${names[0]}
+}
+
+# ---- lookups: validated id -> metadata JSON -----------------------------
+
+lookup_flatpak() {
+  local s a
+  a=$(fetch "flathub-appstream-$1.json" "https://flathub.org/api/v2/appstream/$1") || return 1
+  s=$(fetch "flathub-summary-$1.json" "https://flathub.org/api/v2/summary/$1") || s='{}'
+  jq -cn --arg id "$1" --argjson a "$a" --argjson s "$s" '{
+    store: "flatpak", id: $id,
+    name: ($a.name // $id), summary: ($a.summary // ""),
+    publisher: ($a.developer_name // ""), license: ($a.project_license // ""),
+    permissions: ($s.metadata.permissions // {})
+  }'
+}
+
+lookup_snap() {
+  local j
+  j=$(snap_api "snap-info-$1.json" "info/$1?fields=title,summary,publisher,license,confinement") || return 1
+  jq -cn --arg id "$1" --arg ch "$channel" --argjson classic "$classic" --argjson j "$j" '
+    [$j."channel-map"[] | select(.channel.track == "latest")] as $m
+    | ([$m[] | select(.channel.risk == $ch) | .confinement][0]
+       // [$m[] | .confinement][0] // "strict") as $conf
+    | {
+        store: "snap", id: $id,
+        name: ($j.snap.title // $id), summary: ($j.snap.summary // ""),
+        publisher: ($j.snap.publisher."display-name" // ""),
+        license: ($j.snap.license // ""),
+        confinement: $conf,
+        channels: ([$m[].channel.risk] | unique),
+        # Per channel: a snap can be strict on one and classic on another,
+        # so the panel re-reads this when the channel changes.
+        confinements: ([$m[] | {key: .channel.risk, value: .confinement}] | from_entries),
+        channel: $ch,
+        # A classic snap cannot install without --classic, so the store decides.
+        classic: ($classic or $conf == "classic")
+      }'
+}
+
+cmd_resolve() {
+  [ $# -eq 1 ] || die "usage: nixarchy-flatsnap resolve <text>"
+  classify "$1"
+  case $store in
+    flatpak) lookup_flatpak "$id" || die "$id: not found on Flathub (or lookup failed)" ;;
+    snap) lookup_snap "$id" || die "$id: not found in the Snap Store (or lookup failed)" ;;
+    ask)
+      # A bare lowercase name could be either store. A Flatpak ID always has
+      # dots, so on the Flathub side this is a search, not a lookup; the
+      # person picks from what both stores returned.
+      local s f out
+      s=$(lookup_snap "$id" 2>/dev/null) || s=null
+      f=$(search_flathub "$id" "flathub-search-$id.json" 2>/dev/null | jq -c '.[:5]') || f='[]'
+      out=$(jq -cn --argjson s "$s" --argjson f "$f" '
+        ([$s | select(. != null)] + $f) as $c
+        | if ($c | length) == 0 then {error: "not found on Flathub or in the Snap Store"}
+          elif ($c | length) == 1 and $s != null then $s
+          else {store: "ask", candidates: $c} end')
+      printf '%s\n' "$out"
+      if jq -e 'has("error")' <<<"$out" >/dev/null; then exit 2; fi
+      ;;
+  esac
+}
+
+# ---- search ---------------------------------------------------------------
+
+query_ok() {
+  case $1 in *$'\n'*|*$'\r'*) die "one line only" ;; esac
+  [ -n "$1" ] && [ ${#1} -le 100 ] || die "search text must be 1-100 characters"
+}
+
+# search_* <query> [fixture]: the fixture name only matters offline.
+search_flathub() {
+  local body
+  body=$(jq -cn --arg q "$1" '{query: $q}')
+  fetch "${2:-flathub-search.json}" https://flathub.org/api/v2/search \
+    -X POST -H 'Content-Type: application/json' --data-binary "$body" |
+    jq -c '[.hits[:20][] | {store: "flatpak", id: .app_id, name, summary}]'
+}
+
+search_snap() {
+  local q
+  q=$(jq -rn --arg q "$1" '$q | @uri')
+  snap_api snap-find.json "find?q=$q&fields=title,summary,publisher" |
+    jq -c '[.results[:20][] | {store: "snap", id: .name, name: (.snap.title // .name),
+            summary: (.snap.summary // ""), publisher: (.snap.publisher."display-name" // "")}]'
+}
+
+cmd_search() {
+  [ $# -eq 2 ] || die "usage: nixarchy-flatsnap search flatpak|snap <text>"
+  query_ok "$2"
+  case $1 in
+    flatpak) search_flathub "$2" || die "Flathub search failed" ;;
+    snap) search_snap "$2" || die "Snap Store search failed" ;;
+    *) die "store must be flatpak or snap" ;;
+  esac
+}
+
+# ---- the file ---------------------------------------------------------------
+#
+# flatsnap.nix is ours: regenerated whole from a JSON state, never patched.
+# Reading it back goes through Nix itself, so a hand edit that keeps the
+# shape survives the next write, and one that does not is refused, not lost.
+
+file() { printf '%s' "${NIXARCHY_FLATSNAP_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/nixarchy/flatsnap.nix}"; }
+
+# Sets STATE in THIS shell. It must not be called as $(load_state): a die
+# inside a command substitution only leaves the subshell, and its error
+# JSON would then be read as state and written over the user's file.
+STATE=
+load_state() {
+  local f; f=$(file)
+  if [ ! -f "$f" ]; then STATE='{"flatpaks":[],"snaps":[],"pendingRemoval":[]}'; return; fi
+  # Exactly our shape, nothing else: anything more (a function, another
+  # option) would be silently dropped by the next regenerate. `or` alone is
+  # not enough -- Nix falls back through a function as if it were a set.
+  STATE=$(nix-instantiate --eval --strict --json --expr \
+    '{ f }: let
+       m = import f;
+       only = s: ks: builtins.isAttrs s && builtins.all (k: builtins.elem k ks) (builtins.attrNames s);
+       c = m.programs.nixarchy.flatsnap;
+     in
+       assert only m [ "programs" ] && only m.programs [ "nixarchy" ]
+         && only m.programs.nixarchy [ "flatsnap" ] && only c [ "flatpaks" "snaps" "pendingRemoval" ];
+       { flatpaks = c.flatpaks or [ ]; snaps = c.snaps or [ ]; pendingRemoval = c.pendingRemoval or [ ]; }' \
+    --arg f "$f" 2>/dev/null) ||
+    die "$f is not in the shape this tool writes; fix or move it, then retry"
+}
+
+# JSON state -> Nix. Every string goes through nixstr; the ID grammars
+# already exclude \, " and ${, so this is the second line, not the first.
+render() {
+  jq -r '
+    def nixstr: "\"" + (gsub("\\\\"; "\\\\\\\\") | gsub("\""; "\\\"") | gsub("\\$\\{"; "\\${")) + "\"";
+    def nix: if type == "string" then nixstr
+      elif type == "boolean" then tostring
+      elif type == "array" then "[ " + (map(nix) | join(" ")) + " ]"
+      elif type == "object" then
+        "{ " + (to_entries | map((.key | nixstr) + " = " + (.value | nix) + ";") | join(" ")) + " }"
+      else error("unexpected value") end;
+    "# Generated by nixarchy-flatsnap. Edit through the menu, or by hand and keep the shape.",
+    "{",
+    "  programs.nixarchy.flatsnap = {",
+    "    flatpaks = [",
+    (.flatpaks[] | "      { appId = \(.appId | nixstr);"
+        + (if (.overrides // {}) == {} then "" else " overrides = \(.overrides | nix);" end) + " }"),
+    "    ];",
+    "    snaps = [",
+    (.snaps[] | "      { name = \(.name | nixstr); channel = \(.channel | nixstr); classic = \(.classic | tostring); }"),
+    "    ];",
+    # Un-declared snaps keep snapd on until they are actually gone; see module.nix.
+    (if .pendingRemoval == [] then empty
+     else "    pendingRemoval = [ " + (.pendingRemoval | map(nixstr) | join(" ")) + " ];" end),
+    "  };",
+    "}"'
+}
+
+# Backup, write, parse-check, restore on failure: the nixarchy idiom.
+write_state() {
+  local f tmp st; f=$(file)
+  st=$(cat)
+  # A pending removal that snap no longer lists is done: drop it, so the
+  # next apply can turn snapd off. Without snap on PATH, keep them all.
+  if command -v snap >/dev/null; then
+    st=$(jq -c --argjson i "$(snap list 2>/dev/null | awk 'NR > 1 {print $1}' | jq -Rsc 'split("\n") | map(select(. != ""))')" \
+      '.pendingRemoval |= map(select(. as $n | $i | index($n) != null))' <<<"$st")
+  fi
+  mkdir -p "$(dirname "$f")"
+  tmp=$(mktemp "$f.XXXXXX")
+  render <<<"$st" >"$tmp"
+  [ -f "$f" ] && cp -p "$f" "$f.bak"
+  if nix-instantiate --parse "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$f"
+  else
+    rm -f "$tmp"
+    [ -f "$f.bak" ] && cp -p "$f.bak" "$f"
+    die "generated file did not parse; $f left as it was"
+  fi
+}
+
+installed() {
+  # null, not false, when the tool is absent: "unknown" is not "missing".
+  local fp=null sn=null
+  if command -v flatpak >/dev/null; then
+    fp=$(flatpak list --app --columns=application 2>/dev/null | jq -Rsc 'split("\n") | map(select(. != ""))')
+  fi
+  if command -v snap >/dev/null; then
+    sn=$(snap list 2>/dev/null | awk 'NR > 1 {print $1}' | jq -Rsc 'split("\n") | map(select(. != ""))')
+  fi
+  jq -cn --argjson fp "$fp" --argjson sn "$sn" '{flatpak: $fp, snap: $sn}'
+}
+
+cmd_list() {
+  local inst
+  load_state
+  inst=$(installed)
+  jq -cn --argjson st "$STATE" --argjson i "$inst" '
+    [ ($st.flatpaks[] | {store: "flatpak", id: .appId, overrides: (.overrides // {}),
+        installed: (if $i.flatpak == null then null else (.appId as $a | $i.flatpak | index($a) != null) end)}),
+      ($st.snaps[] | {store: "snap", id: .name, channel, classic,
+        installed: (if $i.snap == null then null else (.name as $a | $i.snap | index($a) != null) end)}) ]'
+}
+
+# Flatpak override: Section.key=value. Context keys are lists (filesystems,
+# sockets, ...); everything else is a string, as in nix-flatpak's option.
+OV_RE='^([A-Za-z][A-Za-z ]{0,40})\.([A-Za-z0-9_.-]{1,100})=([A-Za-z0-9_./:~!@+=-]{1,200})$'
+
+cmd_add() {
+  local st
+  case ${1:-} in
+    flatpak)
+      [ $# -ge 2 ] || die "usage: nixarchy-flatsnap add flatpak <appId> [--override Section.key=value]..."
+      [[ $2 =~ $FP_RE ]] || die "not a valid Flatpak app ID"
+      local app=$2 ov='{}'; shift 2
+      while [ $# -gt 0 ]; do
+        [ "$1" = --override ] && [ $# -ge 2 ] || die "unknown argument $1"
+        [[ $2 =~ $OV_RE ]] || die "override must be Section.key=value, e.g. Context.filesystems=xdg-pictures:ro"
+        ov=$(jq -c --arg s "${BASH_REMATCH[1]}" --arg k "${BASH_REMATCH[2]}" --arg v "${BASH_REMATCH[3]}" '
+          if $s == "Context" then .[$s][$k] = ((.[$s][$k] // []) + [$v] | unique)
+          else .[$s][$k] = $v end' <<<"$ov")
+        shift 2
+      done
+      load_state
+      st=$(jq -c --arg a "$app" --argjson ov "$ov" '
+        .flatpaks = ([.flatpaks[] | select(.appId != $a)] + [{appId: $a} + (if $ov == {} then {} else {overrides: $ov} end)])' <<<"$STATE")
+      ;;
+    snap)
+      [ $# -ge 2 ] || die "usage: nixarchy-flatsnap add snap <name> [--channel c] [--classic]"
+      [[ $2 =~ $SNAP_RE ]] || die "not a valid snap name"
+      local name=$2; shift 2
+      while [ $# -gt 0 ]; do
+        case $1 in
+          --classic) classic=true; shift ;;
+          --channel) channel=${2:-}; shift 2 || die "--channel needs a value" ;;
+          *) die "unknown argument $1" ;;
+        esac
+      done
+      [[ $channel =~ $CHAN_RE ]] || die "channel must be stable, candidate, beta or edge"
+      load_state
+      st=$(jq -c --arg n "$name" --arg c "$channel" --argjson k "$classic" '
+        .snaps = ([.snaps[] | select(.name != $n)] + [{name: $n, channel: $c, classic: $k}])
+        | .pendingRemoval -= [$n]' <<<"$STATE")
+      ;;
+    *) die "usage: nixarchy-flatsnap add flatpak|snap <id> ..." ;;
+  esac
+  write_state <<<"$st"
+  cmd_list
+}
+
+cmd_rm() {
+  [ $# -eq 2 ] || die "usage: nixarchy-flatsnap rm flatpak|snap <id>"
+  local st
+  load_state
+  case $1 in
+    flatpak) st=$(jq -c --arg a "$2" 'if any(.flatpaks[]; .appId == $a) then .flatpaks |= map(select(.appId != $a)) else empty end' <<<"$STATE") ;;
+    snap) st=$(jq -c --arg n "$2" 'if any(.snaps[]; .name == $n)
+                 then .snaps |= map(select(.name != $n)) | .pendingRemoval = (.pendingRemoval + [$n] | unique)
+                 else empty end' <<<"$STATE") ;;
+    *) die "store must be flatpak or snap" ;;
+  esac
+  [ -n "$st" ] || die "$2 is not declared"
+  write_state <<<"$st"
+  cmd_list
+}
+
+# ---- preflight / apply ------------------------------------------------------
+
+flake() { printf '%s' "${NIXARCHY_FLAKE:-/etc/nixos}"; }
+
+# One evaluation of this host's configuration, answering what apply needs
+# to know before it runs:
+#   - is the module imported? Without it, the copied flatsnap.nix names
+#     options that do not exist, and the rebuild fails on evaluation.
+#   - does this nixarchy-apply copy flatsnap.nix at all? One from before
+#     the nixarchy patch does not, and the apply would "succeed" doing nothing.
+#   - with uninstallUnmanaged on, which installed Flatpaks will be removed?
+cmd_preflight() {
+  local host ev apply_bin fp
+  host=$(uname -n)
+  apply_bin=$(command -v nixarchy-apply) || die "nixarchy-apply not found: is this nixarchy?"
+  grep -q flatsnap "$apply_bin" ||
+    die "this nixarchy's apply does not copy flatsnap.nix yet; update nixarchy"
+  ev=$(nix eval --json "$(flake)#nixosConfigurations.\"$host\"" --apply '
+    c: {
+      hasModule = (c.options.programs.nixarchy or { }) ? flatsnap;
+      uninstallUnmanaged = c.config.services.flatpak.uninstallUnmanaged or false;
+      declared = map (p: if builtins.isString p then p else p.appId)
+        (c.config.services.flatpak.packages or [ ]);
+    }' 2>/dev/null) || die "could not evaluate nixosConfigurations.$host in $(flake)"
+  fp='[]'
+  if command -v flatpak >/dev/null; then
+    fp=$(flatpak list --app --columns=application 2>/dev/null | jq -Rsc 'split("\n") | map(select(. != ""))')
+  fi
+  jq -cn --argjson e "$ev" --argjson fp "$fp" --arg host "$host" '
+    {
+      ok: $e.hasModule,
+      message: (if $e.hasModule then "ready"
+        else "the flatsnap module is not in nixosConfigurations.\($host): add inputs.nixarchy-flatsnap.nixosModules.default to its modules" end),
+      willRemove: (if $e.uninstallUnmanaged then $fp - $e.declared else [] end)
+    }'
+}
+
+# Copy the selection into the flake and rebuild -- through nixarchy-apply,
+# never around it. Streaming and the pkexec choice follow nixarchy-pkg's
+# cmd_apply; see the comment there for why each is the way it is.
+cmd_apply() {
+  local pf statuses rc filt
+  pf=$(cmd_preflight)
+  jq -e '.ok' <<<"$pf" >/dev/null || { jq -c '{error: .message}' <<<"$pf"; exit 2; }
+  jq -r '.willRemove[] | "uninstallUnmanaged is on: this apply removes \(.)"' <<<"$pf"
+  set +e +o pipefail
+  NO_COLOR=1 NH_ELEVATION_STRATEGY="${NH_ELEVATION_STRATEGY:-pkexec}" \
+    nixarchy-apply --yes --no-preview </dev/null 2>&1 |
+    awk '{ gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\033[()][A-Za-z0-9]/, "")
+           sub(/.*\r/, ""); print; fflush() }'
+  statuses=("${PIPESTATUS[@]}")
+  set -e -o pipefail
+  rc=${statuses[0]}; filt=${statuses[1]}
+  jq -nc --argjson rc "$rc" --argjson filt "$filt" '
+    {nixarchyFlatsnapApply: {
+      ok: ($rc == 0 and $filt == 0), exit: $rc,
+      message: (if $filt != 0 then "the log filter failed (exit \($filt)); nixarchy-apply exited \($rc)"
+                elif $rc == 0 then "applied" else "nixarchy-apply exited \($rc)" end)}}'
+}
+
+main() {
+  local verb=${1:-}; shift || true
+  case $verb in
+    resolve) cmd_resolve "$@" ;;
+    search) cmd_search "$@" ;;
+    list) cmd_list ;;
+    add) cmd_add "$@" ;;
+    rm) cmd_rm "$@" ;;
+    preflight) cmd_preflight ;;
+    apply) cmd_apply ;;
+    *) die "usage: nixarchy-flatsnap resolve|search|list|add|rm|preflight|apply ..." ;;
+  esac
+}
+
+main "$@"

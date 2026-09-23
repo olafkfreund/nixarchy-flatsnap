@@ -1,0 +1,34 @@
+{
+  "results": [
+    {
+      "name": "hello",
+      "snap": {
+        "title": "hello",
+        "summary": "GNU Hello, the \"hello world\" snap",
+        "publisher": {
+          "display-name": "Canonical"
+        }
+      }
+    },
+    {
+      "name": "hello-world",
+      "snap": {
+        "title": "Hello World",
+        "summary": "The 'hello-world' of snaps",
+        "publisher": {
+          "display-name": "Canonical"
+        }
+      }
+    },
+    {
+      "name": "hello-pasman",
+      "snap": {
+        "title": "hello-pasman",
+        "summary": "Hello and welcome greetings.",
+        "publisher": {
+          "display-name": "pasman1"
+        }
+      }
+    }
+  ]
+}

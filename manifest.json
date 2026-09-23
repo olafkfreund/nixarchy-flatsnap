@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "nixarchy.flatsnap",
+  "name": "Flatpak & Snap",
+  "version": "0.1.0",
+  "author": "olafkfreund",
+  "license": "MIT",
+  "description": "Paste a Flathub or Snapcraft link, an app ID or a snap name, and install it declaratively -- from the Omarchy menu, on the keyboard.",
+  "homepage": "https://github.com/olafkfreund/nixarchy-flatsnap",
+  "kinds": ["menu"],
+  "entryPoints": {
+    "menu": "Menu.qml"
+  },
+  "keepLoaded": true
+}
