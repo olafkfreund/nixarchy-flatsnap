@@ -90,13 +90,26 @@ spec: spec/2026-09-23-1-flatpak-snap-menu.md
 - **Step 6, overrides field.** A single-line field of space-separated
   `Section.key=value` entries, not one per line. A single-line field is what the
   shell's `TextField` gives, and the CLI validates each entry anyway.
-- **Step 6, host check: open.** The panel loads, opens and stays responsive in
-  an isolated Quickshell with stand-ins for `qs.Commons`/`qs.Ui`. Installing it into
-  the live shell with a file-by-file `cp -r` + `chmod -R` caused ten full shell
-  reloads in one second. After that the shell ran at 100% CPU with IPC down
-  until the folder was removed. The cause is not proven. The live check is
-  repeated only with the user's go-ahead, using a single atomic `mv` of a
-  prepared folder (one watcher event).
+- **Step 6, host check: done (2026-09-23).** The first attempt copied the
+  plugin in file by file (`cp -r` + `chmod -R`). That caused ten full shell
+  reloads in one second, and the shell wedged at 100% CPU until the folder was
+  removed. The retry prepared the folder outside `plugins/` and moved it in with
+  one `mv`: one reload, about 12 s busy, then healthy. So the cause was the
+  reload burst, not the plugin (compare nixarchy's open issue on shell.json saves
+  rebuilding every panel).
+
+  Live, by keyboard (`wtype`), with screenshots:
+  1. Pasting a Flathub URL and pressing Enter showed Calculator's card with
+     its real permissions.
+  2. Enter queued it, and `flatsnap.nix` was written.
+  3. Tab showed it under Declared.
+  4. For `snap install hello-world`, `c c` moved the channel stable → beta, the
+     no-AppArmor warning was shown, and `x` armed the classic confirmation.
+  5. Esc left the card without queuing.
+  6. `d` then `y` removed the Flatpak, and the file was back to empty lists.
+
+  The test file was deleted afterwards. **Dev installs: stage outside
+  `plugins/` and `mv` in.**
 
 ## Steps
 
