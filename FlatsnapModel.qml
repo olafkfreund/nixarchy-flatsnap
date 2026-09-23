@@ -22,6 +22,7 @@ QtObject {
   property string channel: "stable"
   property bool classic: false
   property bool classicArmed: false   // first x arms, second x confirms
+  property bool classicChosen: false  // x x on a channel the store publishes strict
   property string overrides: ""       // "Section.key=value ..." for Flatpaks
   property bool overridesArmed: false // overrides widen a sandbox: Enter twice
   onOverridesChanged: overridesArmed = false
@@ -111,6 +112,7 @@ QtObject {
     card = d
     channel = d.channel || "stable"
     classic = d.classic === true
+    classicChosen = false
     classicArmed = false
     overrides = ""
     message = ""
@@ -126,6 +128,13 @@ QtObject {
     var all = have.length ? order.filter(function (c) { return have.indexOf(c) >= 0 }) : order
     if (all.length === 0) return
     channel = all[(all.indexOf(channel) + 1) % all.length]
+    // Confinement is per channel. A classic channel forces --classic (snap
+    // install refuses it otherwise); a strict one keeps only what x x chose.
+    var conf = (card.confinements || {})[channel]
+    if (conf) {
+      var c = Object.assign({}, card); c.confinement = conf; card = c
+      classic = conf === "classic" || classicChosen
+    }
   }
 
   // Turning classic ON takes two presses: it removes the sandbox. Turning
@@ -135,10 +144,10 @@ QtObject {
     if (!card || card.store !== "snap") return
     if (classic) {
       if (card.confinement === "classic") { message = "this snap is only published with classic confinement"; return }
-      classic = false; classicArmed = false; return
+      classic = false; classicChosen = false; classicArmed = false; return
     }
     if (!classicArmed) { classicArmed = true; message = "x again: run this snap WITHOUT a sandbox"; return }
-    classic = true; classicArmed = false; message = ""
+    classic = true; classicChosen = true; classicArmed = false; message = ""
   }
 
   // ---- the file --------------------------------------------------------

@@ -32,6 +32,20 @@ ShellRoot {
     fs._showCard({ store: "snap", id: "x-y", name: "XY" })
     fs.cycleChannel(); t.ok(fs.channel === "candidate", "no channel list: all four, got " + fs.channel)
 
+    // Confinement follows the channel: classic on edge forces --classic,
+    // back on a strict channel it goes -- unless x x chose it.
+    fs._showCard({ store: "snap", id: "tool", name: "Tool", channels: ["edge", "stable"],
+                   confinement: "strict", confinements: { stable: "strict", edge: "classic" } })
+    t.ok(!fs.classic, "strict stable: not classic")
+    fs.cycleChannel()
+    t.ok(fs.channel === "edge" && fs.classic && fs.card.confinement === "classic", "edge is classic: forced, card updated")
+    fs.cycleChannel()
+    t.ok(fs.channel === "stable" && !fs.classic && fs.card.confinement === "strict", "back to strict stable: classic dropped")
+    fs.toggleClassic(); fs.toggleClassic()
+    t.ok(fs.classic, "x x on strict stable chooses classic")
+    fs.cycleChannel(); fs.cycleChannel()
+    t.ok(fs.channel === "stable" && fs.classic, "a chosen classic survives cycling back")
+
     // Overrides: the first Enter only arms and says what it will do.
     fs._showCard({ store: "flatpak", id: "org.gimp.GIMP", name: "GIMP", permissions: {} })
     fs.overrides = "Context.filesystems=home"

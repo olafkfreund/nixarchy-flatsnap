@@ -52,6 +52,8 @@ expect 'snap install hello-world --channel=beta'                '.id=="hello-wor
 expect 'snap install hello-world --edge'                        '.channel=="edge"'
 expect 'snap install code --classic'                            '.classic==true'
 expect 'snap install code'                                      '.classic==true and .confinement=="classic"'
+expect 'snap install code'                                      '.confinements == {"stable":"classic"}'
+expect 'https://snapcraft.io/hello-world'                       '(.confinements | keys) == (.channels) and ([.confinements[]] | unique) == ["strict"]'
 expect '  org.gnome.Calculator  '                               '.store=="flatpak"'
 expect 'hello-world'                                            '.store=="snap" and .id=="hello-world"'
 

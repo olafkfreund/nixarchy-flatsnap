@@ -131,6 +131,9 @@ lookup_snap() {
         license: ($j.snap.license // ""),
         confinement: $conf,
         channels: ([$m[].channel.risk] | unique),
+        # Per channel: a snap can be strict on one and classic on another,
+        # so the panel re-reads this when the channel changes.
+        confinements: ([$m[] | {key: .channel.risk, value: .confinement}] | from_entries),
         channel: $ch,
         # A classic snap cannot install without --classic, so the store decides.
         classic: ($classic or $conf == "classic")

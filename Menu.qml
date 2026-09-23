@@ -125,7 +125,9 @@ Item {
               event.accepted = true; return
             case Qt.Key_Return:
             case Qt.Key_Enter:
-              if (ovField.activeFocus) { root.focusKeys() }
+              // Enter in the overrides field is the first of the two presses:
+              // it leaves the field and asks to queue, which arms the confirm.
+              if (ovField.activeFocus) { root.focusKeys(); fs.queue() }
               else if (field.activeFocus) { fs.resolve(field.text); root.focusKeys() }
               else if (fs.card) fs.queue()
               else fs.pick()
