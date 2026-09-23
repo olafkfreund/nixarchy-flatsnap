@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# `cond && ok || bad` is safe: ok only increments a counter and never fails.
+# Single-quoted $(...) and ${...} are the point: hostile input, unexpanded.
+# shellcheck disable=SC2015,SC2016
 # Offline tests for bin/nixarchy-flatsnap. No network: every API response is
 # a fixture in tests/fixtures. Run: bash tests/cli.sh
 set -uo pipefail
@@ -78,6 +81,72 @@ refuse_early "$(printf 'a%.0s' {1..600})"
 refuse 'no-such-snap'
 refuse 'org.example.DoesNotExist'
 }
+
+expect 'calculator' '.store=="ask" and (.candidates | length) == 3 and .candidates[0].id == "org.gnome.Calculator"'
+
+# ---- search ---------------------------------------------------------------
+run() { bash "$cli" "$@"; }
+check() { # check <description> <jq filter> <cmd...>
+  local d=$1 f=$2 out; shift 2
+  out=$("$@") || { bad "$d: exited $? -> $out"; return; }
+  jq -e "$f" <<<"$out" >/dev/null && ok || bad "$d: $f -> $out"
+}
+check "search flathub" '.[0] == {store:"flatpak",id:"org.gnome.Calculator",name:"Calculator",summary:.[0].summary}' run search flatpak calculator
+check "search snap"    'map(.id) == ["hello","hello-world","hello-pasman"]' run search snap hello
+out=$(run search snap "$(printf 'a\nb')"); [ $? -eq 2 ] && ok || bad "multi-line search accepted: $out"
+out=$(run search apt hello); [ $? -eq 2 ] && ok || bad "unknown store accepted: $out"
+
+# ---- add / rm / list, round-tripping through Nix -------------------------
+work=$(mktemp -d); trap 'rm -rf "$work" "$NIXARCHY_FLATSNAP_FETCHLOG"' EXIT
+export NIXARCHY_FLATSNAP_FILE="$work/flatsnap.nix"
+# No flatpak or snap on PATH: installed must be null ("unknown"), not false.
+parses() { nix-instantiate --parse "$NIXARCHY_FLATSNAP_FILE" >/dev/null 2>&1 && ok || bad "file does not parse: $(cat "$NIXARCHY_FLATSNAP_FILE")"; }
+
+check "list empty" '. == []' run list
+check "add flatpak" '. == [{store:"flatpak",id:"org.gnome.Calculator",overrides:{},installed:null}]' run add flatpak org.gnome.Calculator
+parses
+check "add flatpak with overrides" '.[0].overrides == {"Context":{"filesystems":["xdg-pictures:ro","~/Games"]},"Environment":{"LC_ALL":"C.UTF-8"}}' \
+  run add flatpak org.gnome.Calculator --override Context.filesystems=xdg-pictures:ro --override Context.filesystems=~/Games --override Environment.LC_ALL=C.UTF-8
+parses
+check "add snap" '.[1] == {store:"snap",id:"code",channel:"edge",classic:true,installed:null}' run add snap code --channel edge --classic
+parses
+check "re-add replaces, no duplicate" '(map(select(.id=="code")) | length) == 1 and .[1].channel == "stable"' run add snap code
+check "rm flatpak" 'map(.id) == ["code"]' run rm flatpak org.gnome.Calculator
+parses
+check "rm snap" '. == []' run rm snap code
+parses
+out=$(run rm snap code); [ $? -eq 2 ] && ok || bad "rm of undeclared entry accepted: $out"
+for a in 'flatpak org.x.${y}' 'snap Bad_Name' 'snap ok --channel latest/stable' 'flatpak org.a.B --override Context.filesystems=$(id)' 'flatpak org.a.B --override bad'; do
+  # shellcheck disable=SC2086 # word-splitting the case into argv is the point
+  out=$(run add $a); [ $? -eq 2 ] && ok || bad "add $a accepted: $out"
+done
+
+# A hand edit that keeps the shape survives the next write.
+run add snap hello-world >/dev/null
+sed -i 's|    flatpaks = \[|    flatpaks = [\n      { appId = "org.hand.Edited"; }|' "$NIXARCHY_FLATSNAP_FILE"
+check "hand edit kept" 'map(.id) == ["org.hand.Edited","hello-world","code"]' run add snap code
+# One that breaks the shape is refused, and the file is not touched.
+for foreign in '{ config, ... }: { }' '{ services.foo.enable = true; programs.nixarchy.flatsnap.snaps = [ ]; }'; do
+  printf '%s\n' "$foreign" >"$NIXARCHY_FLATSNAP_FILE"
+  out=$(run add snap x1); rc=$?
+  [ $rc -eq 2 ] && [ "$(cat "$NIXARCHY_FLATSNAP_FILE")" = "$foreign" ] && ok || bad "foreign shape overwritten (rc=$rc): $out"
+done
+
+# A generated file that fails to parse restores the backup.
+run rm flatpak org.hand.Edited >/dev/null 2>&1; rm -f "$NIXARCHY_FLATSNAP_FILE"
+run add snap hello-world >/dev/null; cp "$NIXARCHY_FLATSNAP_FILE" "$work/before"
+mkdir "$work/fakebin"; printf '#!/bin/sh\ncase "$1" in --parse) exit 1;; esac\nexec %s "$@"\n' "$(command -v nix-instantiate)" >"$work/fakebin/nix-instantiate"; chmod +x "$work/fakebin/nix-instantiate"
+out=$(PATH="$work/fakebin:$PATH" run add snap code); rc=$?
+[ $rc -eq 2 ] && cmp -s "$work/before" "$NIXARCHY_FLATSNAP_FILE" && [ -z "$(find "$work" -name 'flatsnap.nix.??????')" ] && ok || bad "parse failure did not restore (rc=$rc): $out"
+
+# installed: stub flatpak/snap on PATH.
+printf '#!/bin/sh\necho org.gnome.Calculator\n' >"$work/fakebin/flatpak"
+printf '#!/bin/sh\nprintf "Name Version\\nhello-world 6.4\\n"\n' >"$work/fakebin/snap"
+rm "$work/fakebin/nix-instantiate"; chmod +x "$work/fakebin/"*
+run add flatpak org.gnome.Calculator >/dev/null
+check "installed flags" 'map({(.id): .installed}) | add == {"hello-world":true,"org.gnome.Calculator":true}' env PATH="$work/fakebin:$PATH" bash "$cli" list
+run add snap code >/dev/null
+check "not installed" '(.[] | select(.id=="code") | .installed) == false' env PATH="$work/fakebin:$PATH" bash "$cli" list
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

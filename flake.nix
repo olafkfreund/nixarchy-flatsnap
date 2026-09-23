@@ -31,6 +31,8 @@
           cli = pkgs.runCommand "nixarchy-flatsnap-cli"
             { nativeBuildInputs = with pkgs; [ bash jq nix ]; }
             ''
+              # nix-instantiate wants a writable state dir, and the sandbox has none.
+              export HOME=$TMPDIR NIX_STATE_DIR=$TMPDIR/nix-state NIX_REMOTE=local?root=$TMPDIR/nix-root
               cp -r ${./bin} bin; cp -r ${./tests} tests; chmod -R u+w .
               bash tests/cli.sh
               touch "$out"
