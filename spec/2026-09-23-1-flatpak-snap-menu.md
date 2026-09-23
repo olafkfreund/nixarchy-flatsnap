@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 1
 intent: intent/2026-09-23-1-flatpak-snap-menu.md
 ---
