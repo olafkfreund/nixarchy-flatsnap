@@ -367,7 +367,19 @@ cmd_rm() {
 
 # ---- preflight / apply ------------------------------------------------------
 
-flake() { printf '%s' "${NIXARCHY_FLAKE:-/etc/nixos}"; }
+# The flake nixarchy-apply will write. It bakes programs.nixarchy.flake in as
+# its own fallback (`flake="${NIXARCHY_FLAKE:-<that>}"`), so read it from
+# there: a hardcoded /etc/nixos would evaluate a different flake than the
+# one apply rebuilds, for anyone who moved theirs.
+flake() {
+  if [ -n "${NIXARCHY_FLAKE:-}" ]; then printf '%s' "$NIXARCHY_FLAKE"; return; fi
+  local a d=""
+  if a=$(command -v nixarchy-apply 2>/dev/null); then
+    # shellcheck disable=SC2016 # a literal ${...}: the line being matched
+    d=$(sed -n 's/^flake="\${NIXARCHY_FLAKE:-\(.*\)}"$/\1/p' "$a" | head -1)
+  fi
+  printf '%s' "${d:-/etc/nixos}"
+}
 
 # One evaluation of this host's configuration, answering what apply needs
 # to know before it runs:
@@ -410,8 +422,16 @@ cmd_apply() {
   pf=$(cmd_preflight)
   jq -e '.ok' <<<"$pf" >/dev/null || { jq -c '{error: .message}' <<<"$pf"; exit 2; }
   jq -r '.willRemove[] | "uninstallUnmanaged is on: this apply removes \(.)"' <<<"$pf"
+  # pkexec, because the panel has no tty for a sudo password; Omarchy's
+  # polkit agent asks on screen. Unless sudo needs no password at all: then
+  # nh's `passwordless` asks nothing the user has not already waived, and a
+  # polkit prompt would be the only thing standing between them and apply.
+  local elev=${NH_ELEVATION_STRATEGY:-}
+  if [ -z "$elev" ]; then
+    if sudo -n true 2>/dev/null; then elev=passwordless; else elev=pkexec; fi
+  fi
   set +e +o pipefail
-  NO_COLOR=1 NH_ELEVATION_STRATEGY="${NH_ELEVATION_STRATEGY:-pkexec}" \
+  NO_COLOR=1 NH_ELEVATION_STRATEGY="$elev" \
     nixarchy-apply --yes --no-preview </dev/null 2>&1 |
     awk '{ gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\033[()][A-Za-z0-9]/, "")
            sub(/.*\r/, ""); print; fflush() }'
