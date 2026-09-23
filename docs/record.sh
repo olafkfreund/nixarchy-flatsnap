@@ -170,6 +170,12 @@ keys a
 hold 10; still 07-apply-log
 wait_apply
 scene applied
+# nix-flatpak installs in its own unit, which can still be running after the
+# switch returns: launch only once Flatpak has the app.
+if [ "$DRY" = 0 ]; then
+  for _ in $(seq 1 180); do flatpak info org.gnome.Calculator >/dev/null 2>&1 && break; sleep 1; done
+  flatpak info org.gnome.Calculator >/dev/null 2>&1 || die "Calculator never installed; see flatpak-managed-install.service"
+fi
 hold 4
 
 scene calculator
