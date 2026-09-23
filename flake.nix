@@ -16,7 +16,13 @@
       forAll = nixpkgs.lib.genAttrs systems;
     in
     {
-      nixosModules.default = import ./module.nix nix-snapd;
+      nixosModules = {
+        # For a host without nix-snapd: the module and the snap daemon.
+        default = { imports = [ ./module.nix nix-snapd.nixosModules.default ]; };
+        # For a host that already imports nix-snapd (and nix-flatpak), e.g. via
+        # nixarchy or its own flake: importing it twice declares services.snap twice.
+        flatsnap = ./module.nix;
+      };
 
       packages = forAll (system:
         let pkgs = nixpkgs.legacyPackages.${system};
@@ -116,6 +122,17 @@
             assert lib.assertMsg (!snapdWith { }) "snapd on with nothing declared";
             assert lib.assertMsg (snapdWith { snaps = [ { name = "hello-world"; } ]; }) "snapd off with a snap declared";
             assert lib.assertMsg (snapdWith { pendingRemoval = [ "hello-world" ]; }) "snapd off while a removal is pending";
+            # A host that already imports nix-snapd, like nixos_config: the
+            # `flatsnap` output must compose with it, not redeclare it.
+            assert lib.assertMsg ((nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = [
+                nix-snapd.nixosModules.default
+                nix-flatpak.nixosModules.nix-flatpak
+                self.nixosModules.flatsnap
+                { boot.isContainer = true; system.stateVersion = "26.05"; programs.nixarchy.flatsnap.snaps = [ { name = "hello-world"; } ]; }
+              ];
+            }).config.systemd.services.nixarchy-flatsnap-snaps.path != [ ]) "flatsnap output does not compose with an existing nix-snapd import";
             pkgs.runCommand "nixarchy-flatsnap-gating" { } "touch $out";
 
           # The declarations merge rather than replace, Flathub survives, and

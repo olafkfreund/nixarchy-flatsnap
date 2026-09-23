@@ -5,9 +5,11 @@
 # already imports. This module does not import it again: two copies from two
 # flake inputs are two declarations of the same options, and eval fails.
 #
-# Curried over nix-snapd so the snap CLI the reconciler runs is the one the
-# daemon ships, not whatever is first on PATH.
-nix-snapd:
+# nix-snapd is not imported here either, for the same reason: a host that
+# already imports it (nixos_config does, for every host) would get
+# services.snap declared twice. flake.nix offers `default` (this plus
+# nix-snapd) and `flatsnap` (this alone). The reconciler uses the host's own
+# snap CLI, so it always matches the daemon that is actually running.
 { config, lib, pkgs, ... }:
 let
   cfg = config.programs.nixarchy.flatsnap;
@@ -15,8 +17,6 @@ let
   # Same grammars as bin/nixarchy-flatsnap; a hand edit gets checked too.
   fpId = lib.types.strMatching "[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*){2,}";
   snapName = lib.types.strMatching "[a-z0-9][a-z0-9-]{0,39}";
-
-  snap = nix-snapd.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
   # Snapd stays on while something is still waiting to be removed: turning
   # it off in the same rebuild that un-declares the last snap would take the
@@ -27,13 +27,12 @@ let
 
   reconcile = pkgs.writeShellApplication {
     name = "nixarchy-flatsnap-reconcile";
-    runtimeInputs = [ snap pkgs.jq pkgs.gawk pkgs.coreutils pkgs.gnugrep ];
+    # No snap here: it comes from /run/current-system/sw via the unit's path.
+    runtimeInputs = [ pkgs.jq pkgs.gawk pkgs.coreutils pkgs.gnugrep ];
     text = builtins.readFile ./bin/nixarchy-flatsnap-reconcile;
   };
 in
 {
-  imports = [ nix-snapd.nixosModules.default ];
-
   options.programs.nixarchy.flatsnap = {
     flatpaks = lib.mkOption {
       type = lib.types.listOf (lib.types.submodule {
@@ -101,6 +100,7 @@ in
         after = [ "snapd.service" "network-online.target" ];
         wants = [ "network-online.target" ];
         wantedBy = [ "multi-user.target" ];
+        path = [ "/run/current-system/sw" ];
         # ExecStart names the plan's store path, so a changed list is a changed
         # unit, and switch-to-configuration restarts it. No restartTriggers needed.
         serviceConfig = {
