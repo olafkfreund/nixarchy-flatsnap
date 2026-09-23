@@ -211,13 +211,28 @@ reconcile '{"snaps":[{"name":"broken","channel":"stable","classic":false},{"name
 ab="$work/applybin"; mkdir -p "$ab"
 stub() { printf '#!/bin/sh\n%s\n' "$2" >"$ab/$1"; chmod +x "$ab/$1"; }
 stub nixarchy-apply '# copies apps services advanced flatsnap
+flake="${NIXARCHY_FLAKE:-/srv/their-flake}"
+echo "elevation=$NH_ELEVATION_STRATEGY" >"$ELEV_LOG"
 printf "\033[1mbuilding\033[0m\\n50%%\\r100%%\\n"; exit ${APPLY_RC:-0}'
 stub flatpak 'printf "org.gnome.Calculator\\ncom.byhand.App\\n"'
-stub nix 'echo "$NIX_EVAL_ANSWER"'
+stub nix 'echo "$3" >"$NIX_LOG"; echo "$NIX_EVAL_ANSWER"'
+stub sudo 'exit ${SUDO_RC:-1}'
+export NIX_LOG="$work/nix.log" ELEV_LOG="$work/elev.log"
+# Hermetic: a developer's own shell may export these (nixarchy sets
+# NIXARCHY_FLAKE), and they would silently decide the tests below.
+unset NIXARCHY_FLAKE NH_ELEVATION_STRATEGY
 pa() { env PATH="$ab:$PATH" bash "$cli" "$@"; }
 
 export NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":false,"declared":["org.gnome.Calculator"]}'
 check "preflight ready" '.ok and .willRemove == []' pa preflight
+# The flake preflight evaluates is the one nixarchy-apply falls back to, not /etc/nixos.
+grep -q '^/srv/their-flake#' "$NIX_LOG" && ok || bad "preflight evaluated $(cat "$NIX_LOG"), not nixarchy-apply's flake"
+NIXARCHY_FLAKE=/tmp/override pa preflight >/dev/null
+grep -q '^/tmp/override#' "$NIX_LOG" && ok || bad "NIXARCHY_FLAKE not honoured: $(cat "$NIX_LOG")"
+# Elevation: pkexec unless sudo needs no password; an explicit choice wins.
+pa apply >/dev/null; grep -qx 'elevation=pkexec' "$ELEV_LOG" && ok || bad "default elevation: $(cat "$ELEV_LOG")"
+SUDO_RC=0 pa apply >/dev/null; grep -qx 'elevation=passwordless' "$ELEV_LOG" && ok || bad "NOPASSWD sudo: $(cat "$ELEV_LOG")"
+SUDO_RC=0 NH_ELEVATION_STRATEGY=run0 pa apply >/dev/null; grep -qx 'elevation=run0' "$ELEV_LOG" && ok || bad "explicit elevation: $(cat "$ELEV_LOG")"
 NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":true,"declared":["org.gnome.Calculator"]}' \
   check "preflight lists what uninstallUnmanaged removes" '.willRemove == ["com.byhand.App"]' pa preflight
 out=$(NIX_EVAL_ANSWER='{"hasModule":false,"uninstallUnmanaged":false,"declared":[]}' pa apply); rc=$?
