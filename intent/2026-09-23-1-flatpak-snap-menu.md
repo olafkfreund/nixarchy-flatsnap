@@ -44,7 +44,9 @@ From the Omarchy menu, a keyboard-only flow:
 - See what is declared, what is queued and what is installed, and remove an
   app by un-declaring it.
 - Nothing is installed until an explicit apply. After apply, the app is in the
-  machine's declarative configuration and survives rebuilds and rollbacks.
+  machine's declarative configuration and survives rebuilds. A rollback
+  restores which apps are declared, not their versions: Flatpaks and Snaps
+  live outside the Nix store, and Snap channels move by design.
 
 The whole flow carries the Omarchy theme and never needs the mouse.
 
@@ -77,6 +79,15 @@ The whole flow carries the Omarchy theme and never needs the mouse.
   validated against an ID grammar before they reach a Nix file or a process
   argument, they are never interpolated into a shell string, and they are shown
   as plain text, not markup.
+- **Pasted URLs:** `https` only, recognised hosts only, bounded size and
+  timeout. A `.flatpakref` is resolved to its app ID and remote. It is not
+  referenced by URL without a hash, which would make the build impure.
+- **Visible escalations:** Snap `classic` confinement is effectively
+  unsandboxed, and a Flatpak permission override widens a sandbox. Both need
+  an explicit confirmation step, and overrides must not clobber the user's own
+  `flatpak override` files.
+- **`uninstallUnmanaged`:** when it is on, a machine's existing hand-installed
+  Flatpaks disappear at the next apply. The plugin should show that diff first.
 - **Theme and keyboard.** Colours come from the shell's tokens. Every action
   has a key.
 - **No symlinks inside the plugin directory.** Omarchy's validator refuses them.
@@ -86,19 +97,26 @@ The whole flow carries the Omarchy theme and never needs the mouse.
 ## Open questions
 
 1. **Snap service source.** nixpkgs has no `services.snap`. The choices are to
-   depend on `io12/nix-snapd` (third party, maintained, adds `services.snap`
+   depend on `nix-community/nix-snapd` pinned as a flake input (third party, maintained, adds `services.snap`
    and confinement), to write a minimal snapd module in this repo, or to scope
    v1 to Flatpak and add Snap later. Snap "fully supported" makes this the
    decision most likely to change the size of the work.
+   *Recommendation:* `nix-community/nix-snapd`; if that dependency is
+   unacceptable, v1 is Flatpak-only.
 2. **Declarative Snaps.** `nix-snapd` runs the daemon but does not declare
    *which* snaps are installed. Either this project adds a small declarative
    layer (a systemd oneshot that reconciles a list against `snap list`), or
    Snaps stay imperative and are only tracked.
+   *Recommendation:* a reconciler. "Tracked but imperative" contradicts the
+   declarative constraint above.
 3. **Where the lists live.** A new `~/.config/nixarchy/flatsnap.nix` imported by
    nixarchy (needs a nixarchy change), or entries in the existing
    `advanced.nix` (no nixarchy change, but mixes with hand-written options).
+   *Recommendation:* the generated `flatsnap.nix`.
 4. **Menu entry point.** A new item under the Omarchy menu's *Install* section
    (like *Install → Package*), a dedicated chord, or both.
+   *Recommendation:* the *Install* menu item for v1, with a chord optional.
 5. **Flatpak scope.** System-wide installs only (nixarchy's current
    `services.flatpak`), or also per-user through Home Manager's `nix-flatpak`
    module.
+   *Recommendation:* system-wide only for v1.
