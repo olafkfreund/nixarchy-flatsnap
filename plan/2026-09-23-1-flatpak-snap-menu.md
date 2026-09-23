@@ -63,6 +63,30 @@ spec: spec/2026-09-23-1-flatpak-snap-menu.md
   (that site already carries the nixarchy look). It is served from `main:/docs` at
   `https://olafkfreund.github.io/nixarchy-flatsnap/`.
 
+## Deviations during implementation
+
+- **Step 4, `pendingRemoval`.** When the last snap is un-declared, turning
+  snapd off in the same rebuild also removes the reconciler, so the snap would
+  never be removed. Now `rm snap X` also adds X to
+  `programs.nixarchy.flatsnap.pendingRemoval` (an internal option).
+  - snapd stays on while `snaps != [] || pendingRemoval != []`.
+  - The CLI prunes names that `snap list` no longer shows at its next write, so
+    snapd turns off on the apply after that.
+  - The removal itself is still decided by `managed` alone.
+- **Step 4, nix-flatpak is required, not imported.** Defining
+  `services.flatpak.packages` needs nix-flatpak's option declarations, even
+  under `mkIf false`. nixarchy imports nix-flatpak, and a second import from this
+  flake would declare the options twice. So the module relies on the host's copy,
+  and `nix-flatpak` (v0.7.0, the same pin as nixarchy) is a flake input used only by
+  the checks.
+- **Step 4, extra check.** `checks.module-gating` evaluates that snapd is off
+  with nothing declared, and on with a snap or a pending removal.
+- **Step 4, `TimeoutStartSec = 30min`** on the reconciler. A oneshot has no start
+  timeout by default.
+- **Step 6, `omarchy plugin validate`.** `omarchy` is not available in the build
+  sandbox, so it runs on the host. The flake keeps the manifest check, as
+  nixarchy-pkg does.
+
 ## Steps
 
 Each step is one commit on `feat/1-flatpak-snap-menu`.

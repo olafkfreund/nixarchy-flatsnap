@@ -148,5 +148,62 @@ check "installed flags" 'map({(.id): .installed}) | add == {"hello-world":true,"
 run add snap code >/dev/null
 check "not installed" '(.[] | select(.id=="code") | .installed) == false' env PATH="$work/fakebin:$PATH" bash "$cli" list
 
+# ---- pendingRemoval: keeps snapd on until the snap is really gone -------
+rm -f "$NIXARCHY_FLATSNAP_FILE"; rm -f "$work/fakebin/"*
+run add snap hello-world >/dev/null
+run rm snap hello-world >/dev/null
+grep -q 'pendingRemoval = \[ "hello-world" \];' "$NIXARCHY_FLATSNAP_FILE" && ok || bad "rm did not queue removal: $(cat "$NIXARCHY_FLATSNAP_FILE")"
+parses
+run add snap hello-world >/dev/null   # re-declared: no longer pending
+grep -q pendingRemoval "$NIXARCHY_FLATSNAP_FILE" && bad "re-add left it pending" || ok
+run rm snap hello-world >/dev/null
+# snap still lists it: stays pending. snap no longer lists it: pruned.
+printf '#!/bin/sh\nprintf "Name Version\\nhello-world 6.4\\n"\n' >"$work/fakebin/snap"; chmod +x "$work/fakebin/snap"
+PATH="$work/fakebin:$PATH" run add flatpak org.gnome.Calculator >/dev/null
+grep -q pendingRemoval "$NIXARCHY_FLATSNAP_FILE" && ok || bad "pruned while still installed"
+printf '#!/bin/sh\nprintf "Name Version\\n"\n' >"$work/fakebin/snap"
+PATH="$work/fakebin:$PATH" run rm flatpak org.gnome.Calculator >/dev/null
+grep -q pendingRemoval "$NIXARCHY_FLATSNAP_FILE" && bad "not pruned once gone" || ok
+
+# ---- the reconciler, against a stub snap with state ----------------------
+rec="$here/../bin/nixarchy-flatsnap-reconcile"
+db="$work/snapdb"; export db
+cat >"$work/fakebin/snap" <<'STUB'
+#!/bin/sh
+# name tracking lines in $db; every call logged.
+echo "$*" >>"$db.log"
+case $1 in
+  wait) ;;
+  list) echo "Name Version Rev Tracking Publisher Notes"; while read -r n t; do echo "$n 1.0 1 $t pub -"; done <"$db" ;;
+  install) ch=${3#--channel=}; [ "$2" = broken ] && exit 1; echo "$2 latest/$ch" >>"$db" ;;
+  refresh) ch=${3#--channel=}; sed -i "s|^$2 .*|$2 latest/$ch|" "$db" ;;
+  remove) sed -i "/^$2 /d" "$db" ;;
+esac
+STUB
+chmod +x "$work/fakebin/snap"
+export STATE_DIRECTORY="$work/state"; mkdir -p "$STATE_DIRECTORY"
+reconcile() { printf '%s' "$1" >"$work/plan.json"; : >"$db.log"; PATH="$work/fakebin:$PATH" bash "$rec" "$work/plan.json"; }
+
+echo "byhand latest/stable" >"$db"
+reconcile '{"snaps":[{"name":"hello-world","channel":"stable","classic":false},{"name":"code","channel":"stable","classic":true}]}' >/dev/null
+grep -qx 'install code --channel=stable --classic' "$db.log" && grep -qx 'install hello-world --channel=stable' "$db.log" && ok || bad "install calls: $(cat "$db.log")"
+[ "$(sort "$STATE_DIRECTORY/managed" | tr '\n' ' ')" = "code hello-world " ] && ok || bad "managed: $(cat "$STATE_DIRECTORY/managed")"
+
+reconcile '{"snaps":[{"name":"hello-world","channel":"edge","classic":false},{"name":"code","channel":"stable","classic":true}]}' >/dev/null
+grep -qx 'refresh hello-world --channel=edge' "$db.log" && ! grep -q '^install' "$db.log" && ok || bad "refresh calls: $(cat "$db.log")"
+
+# Un-declare everything: ours go, the hand-installed one stays.
+reconcile '{"snaps":[]}' >/dev/null
+[ "$(cut -d' ' -f1 "$db")" = byhand ] && [ ! -s "$STATE_DIRECTORY/managed" ] && ok || bad "removal: db=$(cat "$db") managed=$(cat "$STATE_DIRECTORY/managed")"
+
+# Declaring a hand-installed snap does not make it ours to remove later.
+reconcile '{"snaps":[{"name":"byhand","channel":"stable","classic":false}]}' >/dev/null
+reconcile '{"snaps":[]}' >/dev/null
+grep -q '^byhand ' "$db" && ok || bad "removed a hand-installed snap"
+
+# One failure: the rest still happen, and the exit code says so.
+reconcile '{"snaps":[{"name":"broken","channel":"stable","classic":false},{"name":"hello-world","channel":"stable","classic":false}]}' >/dev/null; rc=$?
+[ $rc -eq 1 ] && grep -q '^hello-world ' "$db" && ok || bad "partial failure: rc=$rc db=$(cat "$db")"
+
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

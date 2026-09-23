@@ -209,7 +209,7 @@ file() { printf '%s' "${NIXARCHY_FLATSNAP_FILE:-${XDG_CONFIG_HOME:-$HOME/.config
 STATE=
 load_state() {
   local f; f=$(file)
-  if [ ! -f "$f" ]; then STATE='{"flatpaks":[],"snaps":[]}'; return; fi
+  if [ ! -f "$f" ]; then STATE='{"flatpaks":[],"snaps":[],"pendingRemoval":[]}'; return; fi
   # Exactly our shape, nothing else: anything more (a function, another
   # option) would be silently dropped by the next regenerate. `or` alone is
   # not enough -- Nix falls back through a function as if it were a set.
@@ -220,8 +220,8 @@ load_state() {
        c = m.programs.nixarchy.flatsnap;
      in
        assert only m [ "programs" ] && only m.programs [ "nixarchy" ]
-         && only m.programs.nixarchy [ "flatsnap" ] && only c [ "flatpaks" "snaps" ];
-       { flatpaks = c.flatpaks or [ ]; snaps = c.snaps or [ ]; }' \
+         && only m.programs.nixarchy [ "flatsnap" ] && only c [ "flatpaks" "snaps" "pendingRemoval" ];
+       { flatpaks = c.flatpaks or [ ]; snaps = c.snaps or [ ]; pendingRemoval = c.pendingRemoval or [ ]; }' \
     --arg f "$f" 2>/dev/null) ||
     die "$f is not in the shape this tool writes; fix or move it, then retry"
 }
@@ -247,16 +247,26 @@ render() {
     "    snaps = [",
     (.snaps[] | "      { name = \(.name | nixstr); channel = \(.channel | nixstr); classic = \(.classic | tostring); }"),
     "    ];",
+    # Un-declared snaps keep snapd on until they are actually gone; see module.nix.
+    (if .pendingRemoval == [] then empty
+     else "    pendingRemoval = [ " + (.pendingRemoval | map(nixstr) | join(" ")) + " ];" end),
     "  };",
     "}"'
 }
 
 # Backup, write, parse-check, restore on failure: the nixarchy idiom.
 write_state() {
-  local f tmp; f=$(file)
+  local f tmp st; f=$(file)
+  st=$(cat)
+  # A pending removal that snap no longer lists is done: drop it, so the
+  # next apply can turn snapd off. Without snap on PATH, keep them all.
+  if command -v snap >/dev/null; then
+    st=$(jq -c --argjson i "$(snap list 2>/dev/null | awk 'NR > 1 {print $1}' | jq -Rsc 'split("\n") | map(select(. != ""))')" \
+      '.pendingRemoval |= map(select(. as $n | $i | index($n) != null))' <<<"$st")
+  fi
   mkdir -p "$(dirname "$f")"
   tmp=$(mktemp "$f.XXXXXX")
-  render >"$tmp"
+  render <<<"$st" >"$tmp"
   [ -f "$f" ] && cp -p "$f" "$f.bak"
   if nix-instantiate --parse "$tmp" >/dev/null 2>&1; then
     mv "$tmp" "$f"
@@ -327,7 +337,8 @@ cmd_add() {
       [[ $channel =~ $CHAN_RE ]] || die "channel must be stable, candidate, beta or edge"
       load_state
       st=$(jq -c --arg n "$name" --arg c "$channel" --argjson k "$classic" '
-        .snaps = ([.snaps[] | select(.name != $n)] + [{name: $n, channel: $c, classic: $k}])' <<<"$STATE")
+        .snaps = ([.snaps[] | select(.name != $n)] + [{name: $n, channel: $c, classic: $k}])
+        | .pendingRemoval -= [$n]' <<<"$STATE")
       ;;
     *) die "usage: nixarchy-flatsnap add flatpak|snap <id> ..." ;;
   esac
@@ -341,7 +352,9 @@ cmd_rm() {
   load_state
   case $1 in
     flatpak) st=$(jq -c --arg a "$2" 'if any(.flatpaks[]; .appId == $a) then .flatpaks |= map(select(.appId != $a)) else empty end' <<<"$STATE") ;;
-    snap) st=$(jq -c --arg n "$2" 'if any(.snaps[]; .name == $n) then .snaps |= map(select(.name != $n)) else empty end' <<<"$STATE") ;;
+    snap) st=$(jq -c --arg n "$2" 'if any(.snaps[]; .name == $n)
+                 then .snaps |= map(select(.name != $n)) | .pendingRemoval = (.pendingRemoval + [$n] | unique)
+                 else empty end' <<<"$STATE") ;;
     *) die "store must be flatpak or snap" ;;
   esac
   [ -n "$st" ] || die "$2 is not declared"
