@@ -87,6 +87,17 @@ spec: spec/2026-09-23-1-flatpak-snap-menu.md
   sandbox, so it runs on the host. The flake keeps the manifest check, as
   nixarchy-pkg does.
 
+- **Step 6, overrides field.** A single-line field of space-separated
+  `Section.key=value` entries, not one per line. A single-line field is what the
+  shell's `TextField` gives, and the CLI validates each entry anyway.
+- **Step 6, host check: open.** The panel loads, opens and stays responsive in
+  an isolated Quickshell with stand-ins for `qs.Commons`/`qs.Ui`. Installing it into
+  the live shell with a file-by-file `cp -r` + `chmod -R` caused ten full shell
+  reloads in one second. After that the shell ran at 100% CPU with IPC down
+  until the folder was removed. The cause is not proven. The live check is
+  repeated only with the user's go-ahead, using a single atomic `mv` of a
+  prepared folder (one watcher event).
+
 ## Steps
 
 Each step is one commit on `feat/1-flatpak-snap-menu`.

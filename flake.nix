@@ -18,7 +18,40 @@
     {
       nixosModules.default = import ./module.nix nix-snapd;
 
-      packages = forAll (system: { });
+      packages = forAll (system:
+        let pkgs = nixpkgs.legacyPackages.${system};
+        in rec {
+          default = plugin;
+
+          # runCommand and a plain copy: omarchy-plugin-validate refuses ANY
+          # symlink inside a plugin folder. The CLI rides along in bin/, where
+          # FlatsnapModel.qml finds it; it uses curl, jq and nix from the
+          # nixarchy system, as nixarchy-pkg's adapter does.
+          plugin = pkgs.runCommand "nixarchy-flatsnap-plugin"
+            {
+              meta = with pkgs.lib; {
+                description = "Omarchy plugin: install Flatpak and Snap apps declaratively on nixarchy";
+                homepage = "https://github.com/olafkfreund/nixarchy-flatsnap";
+                license = licenses.mit;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p "$out/bin"
+              cp ${./manifest.json} "$out/manifest.json"
+              cp ${./Menu.qml} "$out/Menu.qml"
+              cp ${./FlatsnapModel.qml} "$out/FlatsnapModel.qml"
+              cp ${./bin/nixarchy-flatsnap} "$out/bin/nixarchy-flatsnap"
+              chmod +x "$out/bin/nixarchy-flatsnap"
+            '';
+
+          # The same CLI on PATH, with its tools pinned, for a terminal.
+          cli = pkgs.writeShellApplication {
+            name = "nixarchy-flatsnap";
+            runtimeInputs = with pkgs; [ curl jq gawk coreutils ];
+            text = builtins.readFile ./bin/nixarchy-flatsnap;
+          };
+        });
 
       checks = forAll (system:
         let pkgs = nixpkgs.legacyPackages.${system};
@@ -40,6 +73,31 @@
               bash tests/cli.sh
               touch "$out"
             '';
+
+          # The manifest is what the shell validates at load; a typo in it is
+          # a plugin that silently never appears.
+          manifest = pkgs.runCommand "nixarchy-flatsnap-manifest"
+            { nativeBuildInputs = [ pkgs.jq ]; }
+            ''
+              jq -e '.schemaVersion == 1 and .id == "nixarchy.flatsnap"
+                     and (.kinds | index("menu")) and .entryPoints.menu == "Menu.qml"' ${./manifest.json} >/dev/null
+              touch "$out"
+            '';
+
+          # A literal colour survives a theme switch and looks wrong.
+          no-hardcoded-colours = pkgs.runCommand "nixarchy-flatsnap-colours" { } ''
+            if grep -nE '"#[0-9a-fA-F]{3,8}"|Qt\.rgba|"(red|white|black|yellow|orange)"' ${./Menu.qml} ${./FlatsnapModel.qml}; then
+              echo "hardcoded colour above; use a Color.* token" >&2
+              exit 1
+            fi
+            touch "$out"
+          '';
+
+          # No symlinks in the plugin folder: the validator refuses them.
+          plugin-no-symlinks = pkgs.runCommand "nixarchy-flatsnap-no-symlinks" { } ''
+            if find ${self.packages.${system}.plugin} -type l | grep .; then exit 1; fi
+            touch "$out"
+          '';
 
           # snapd -- and its setuid snap-confine -- only exists while there is
           # a snap to run or one still to remove. Pure evaluation, no VM.
