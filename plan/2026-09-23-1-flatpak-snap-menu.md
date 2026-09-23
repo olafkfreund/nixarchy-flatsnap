@@ -117,6 +117,22 @@ spec: spec/2026-09-23-1-flatpak-snap-menu.md
   the (impossible) snapshot is skipped. The README says so, and the test stub
   refuses a remove without `--purge`.
 
+- **Step 10, module and reconciler: done on razer (2026-09-23).** Run with a
+  `/tmp` clone of nixos_config, the `flatsnap` output, and a CLI-generated
+  `flatsnap.nix`, using `switch-to-configuration test`.
+  - **Install:** snapd came up, the reconciler installed `hello-world`
+    (`managed: [hello-world]`), and nix-flatpak installed `org.gnome.Calculator`
+    next to the curated `geforcenow` and `PodmanDesktop` (merge, not replace).
+    Both ran: "Hello World!" and `gnome-calculator 51.0`.
+  - **Un-declare:** Calculator was removed. `hello-world` was removed after the
+    `--purge` fix. `hello`, installed by hand, was untouched. `managed` was empty.
+  - **Drain:** the next CLI write pruned `pendingRemoval`, and the next configuration
+    has no snapd or reconciler units.
+  - **Rollback:** razer was switched back to generation 2934 and verified, and the
+    clone was deleted.
+  - **Still open, with step 9:** the `nixarchy-apply` path, i.e. the panel's `a`
+    on a patched nixarchy.
+
 ## Steps
 
 Each step is one commit on `feat/1-flatpak-snap-menu`.
