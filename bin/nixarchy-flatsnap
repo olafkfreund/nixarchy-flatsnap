@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# nixarchy-flatsnap -- the Flatpak and Snap entries in ~/.config/nixarchy/flatsnap.nix
+#
+# The panel (Menu.qml) only ever runs this with an argv array and reads JSON
+# from stdout, so every rule about what is allowed lives here, once, where
+# tests/cli.sh can reach it. Errors are {"error": "..."} on stdout, exit 2.
+#
+# Pasted text is untrusted. Nothing from it reaches curl, the Nix file or a
+# process argument until it has matched one of the two ID grammars below.
+set -euo pipefail
+
+FP_RE='^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*){2,}$'
+SNAP_RE='^[a-z0-9][a-z0-9-]{0,39}$'
+CHAN_RE='^(stable|candidate|beta|edge)$'
+
+die() { jq -cn --arg e "$1" '{error: $e}'; exit 2; }
+
+# fetch <fixture-name> <url> [curl args...]
+# NIXARCHY_FLATSNAP_OFFLINE=<dir> serves <dir>/<fixture-name> instead, so the
+# tests never touch the network. A missing fixture behaves like a 404.
+fetch() {
+  local name=$1; shift
+  if [ -n "${NIXARCHY_FLATSNAP_OFFLINE:-}" ]; then
+    # The tests read this to prove hostile input never got as far as a lookup.
+    [ -z "${NIXARCHY_FLATSNAP_FETCHLOG:-}" ] || printf '%s\n' "$name" >>"$NIXARCHY_FLATSNAP_FETCHLOG"
+    cat "$NIXARCHY_FLATSNAP_OFFLINE/$name" 2>/dev/null
+    return
+  fi
+  curl -fsS --proto =https --max-time 10 --max-filesize 2M "$@" 2>/dev/null
+}
+
+snap_api() { fetch "$1" "https://api.snapcraft.io/v2/snaps/$2" -H 'Snap-Device-Series: 16'; }
+
+# ---- classify: pasted text -> store, id, channel, classic ---------------
+
+store="" id="" channel="stable" classic=false
+
+classify() {
+  local text=$1
+  # One line, trimmed. Anything longer than a URL has any business being is
+  # not an app reference.
+  text=${text#"${text%%[![:space:]]*}"}
+  text=${text%"${text##*[![:space:]]}"}
+  case $text in *$'\n'*|*$'\r'*) die "one app at a time: paste a single line" ;; esac
+  [ ${#text} -le 512 ] || die "input too long"
+  [ -n "$text" ] || die "nothing to look up"
+
+  local re_flathub='^https://(www\.)?flathub\.org/([A-Za-z_-]{2,8}/)?apps/(details/)?([^/?#]+)/?([?#].*)?$'
+  local re_ref='^https://dl\.flathub\.org/repo/appstream/([^/?#]+)\.flatpakref([?#].*)?$'
+  local re_snapcraft='^https://(www\.)?snapcraft\.io/([^/?#]+)/?([?#].*)?$'
+
+  if [[ $text =~ $re_flathub ]]; then store=flatpak id=${BASH_REMATCH[4]}
+  elif [[ $text =~ $re_ref ]]; then store=flatpak id=${BASH_REMATCH[1]}
+  elif [[ $text =~ $re_snapcraft ]]; then store=snap id=${BASH_REMATCH[2]}
+  elif [[ $text == *.flatpakref* ]]; then
+    die "only Flathub .flatpakref links are supported; other remotes are not in v1"
+  elif [[ $text == http://* ]]; then die "https links only"
+  elif [[ $text == *://* ]]; then die "not a Flathub or Snapcraft link"
+  elif [[ $text == "flatpak install"* || $text == "snap install"* ]]; then
+    parse_install "$text"
+  elif [[ $text =~ $FP_RE ]]; then store=flatpak id=$text
+  elif [[ $text =~ $SNAP_RE ]]; then store=ask id=$text
+  else die "not an app ID, package name, or Flathub/Snapcraft link"
+  fi
+
+  case $store in
+    flatpak) [[ $id =~ $FP_RE ]] || die "not a valid Flatpak app ID" ;;
+    snap|ask) [[ $id =~ $SNAP_RE ]] || die "not a valid snap name" ;;
+  esac
+}
+
+# A pasted `flatpak install ...` / `snap install ...` line. Split on
+# whitespace by read -a, never eval'd; the flags we understand are kept, the
+# rest are refused rather than silently dropped.
+parse_install() {
+  local -a w; read -ra w <<<"$1"
+  local tool=${w[0]} names=() i
+  for ((i = 2; i < ${#w[@]}; i++)); do
+    case ${w[i]} in
+      -y|--assumeyes|--noninteractive|--system) ;;
+      --user) die "per-user Flatpaks are not supported; this installs system-wide" ;;
+      --classic) [ "$tool" = snap ] || die "unknown flag ${w[i]}"; classic=true ;;
+      --stable|--candidate|--beta|--edge)
+        [ "$tool" = snap ] || die "unknown flag ${w[i]}"; channel=${w[i]#--} ;;
+      --channel=*) channel=${w[i]#--channel=} ;;
+      --channel) i=$((i + 1)); channel=${w[i]:-} ;;
+      -*) die "unknown flag ${w[i]}" ;;
+      *) names+=("${w[i]}") ;;
+    esac
+  done
+  [[ $channel =~ $CHAN_RE ]] || die "channel must be stable, candidate, beta or edge"
+  if [ "$tool" = flatpak ]; then
+    # `flatpak install flathub <id>`: the remote is optional, and only Flathub.
+    if [ ${#names[@]} -eq 2 ]; then
+      [ "${names[0]}" = flathub ] || die "only the flathub remote is supported"
+      names=("${names[1]}")
+    fi
+    store=flatpak
+  else
+    store=snap
+  fi
+  [ ${#names[@]} -eq 1 ] || die "one app at a time"
+  id=${names[0]}
+}
+
+# ---- lookups: validated id -> metadata JSON -----------------------------
+
+lookup_flatpak() {
+  local s a
+  a=$(fetch "flathub-appstream-$1.json" "https://flathub.org/api/v2/appstream/$1") || return 1
+  s=$(fetch "flathub-summary-$1.json" "https://flathub.org/api/v2/summary/$1") || s='{}'
+  jq -cn --arg id "$1" --argjson a "$a" --argjson s "$s" '{
+    store: "flatpak", id: $id,
+    name: ($a.name // $id), summary: ($a.summary // ""),
+    publisher: ($a.developer_name // ""), license: ($a.project_license // ""),
+    permissions: ($s.metadata.permissions // {})
+  }'
+}
+
+lookup_snap() {
+  local j
+  j=$(snap_api "snap-info-$1.json" "info/$1?fields=title,summary,publisher,license,confinement") || return 1
+  jq -cn --arg id "$1" --arg ch "$channel" --argjson classic "$classic" --argjson j "$j" '
+    [$j."channel-map"[] | select(.channel.track == "latest")] as $m
+    | ([$m[] | select(.channel.risk == $ch) | .confinement][0]
+       // [$m[] | .confinement][0] // "strict") as $conf
+    | {
+        store: "snap", id: $id,
+        name: ($j.snap.title // $id), summary: ($j.snap.summary // ""),
+        publisher: ($j.snap.publisher."display-name" // ""),
+        license: ($j.snap.license // ""),
+        confinement: $conf,
+        channels: ([$m[].channel.risk] | unique),
+        channel: $ch,
+        # A classic snap cannot install without --classic, so the store decides.
+        classic: ($classic or $conf == "classic")
+      }'
+}
+
+cmd_resolve() {
+  [ $# -eq 1 ] || die "usage: nixarchy-flatsnap resolve <text>"
+  classify "$1"
+  case $store in
+    flatpak) lookup_flatpak "$id" || die "$id: not found on Flathub (or lookup failed)" ;;
+    snap) lookup_snap "$id" || die "$id: not found in the Snap Store (or lookup failed)" ;;
+    ask)
+      # A bare lowercase name could be either; look in both and let the
+      # person pick. One hit is not a question.
+      local hits=()
+      local f s
+      f=$(lookup_flatpak "$id" 2>/dev/null) && hits+=("$f")
+      s=$(lookup_snap "$id" 2>/dev/null) && hits+=("$s")
+      case ${#hits[@]} in
+        0) die "$id: not found on Flathub or in the Snap Store" ;;
+        1) printf '%s\n' "${hits[0]}" ;;
+        *) printf '%s\n' "${hits[@]}" | jq -cs '{store: "ask", candidates: .}' ;;
+      esac
+      ;;
+  esac
+}
+
+main() {
+  local verb=${1:-}; shift || true
+  case $verb in
+    resolve) cmd_resolve "$@" ;;
+    *) die "usage: nixarchy-flatsnap resolve <text>" ;;
+  esac
+}
+
+main "$@"

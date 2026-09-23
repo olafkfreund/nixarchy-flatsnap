@@ -17,6 +17,24 @@
 
       packages = forAll (system: { });
 
-      checks = forAll (system: { });
+      checks = forAll (system:
+        let pkgs = nixpkgs.legacyPackages.${system};
+        in {
+          shellcheck = pkgs.runCommand "nixarchy-flatsnap-shellcheck"
+            { nativeBuildInputs = [ pkgs.shellcheck ]; }
+            ''
+              shellcheck ${./bin/nixarchy-flatsnap} ${./tests/cli.sh}
+              touch "$out"
+            '';
+
+          # Offline: every API answer is a fixture in tests/fixtures.
+          cli = pkgs.runCommand "nixarchy-flatsnap-cli"
+            { nativeBuildInputs = with pkgs; [ bash jq nix ]; }
+            ''
+              cp -r ${./bin} bin; cp -r ${./tests} tests; chmod -R u+w .
+              bash tests/cli.sh
+              touch "$out"
+            '';
+        });
     };
 }

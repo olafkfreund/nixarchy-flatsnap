@@ -1,0 +1,45 @@
+{
+  "name": "hello-world",
+  "snap": {
+    "title": "Hello World",
+    "summary": "The 'hello-world' of snaps",
+    "license": "MIT",
+    "publisher": {
+      "display-name": "Canonical"
+    }
+  },
+  "channel-map": [
+    {
+      "channel": {
+        "name": "beta",
+        "risk": "beta",
+        "track": "latest"
+      },
+      "confinement": "strict"
+    },
+    {
+      "channel": {
+        "name": "candidate",
+        "risk": "candidate",
+        "track": "latest"
+      },
+      "confinement": "strict"
+    },
+    {
+      "channel": {
+        "name": "edge",
+        "risk": "edge",
+        "track": "latest"
+      },
+      "confinement": "strict"
+    },
+    {
+      "channel": {
+        "name": "stable",
+        "risk": "stable",
+        "track": "latest"
+      },
+      "confinement": "strict"
+    }
+  ]
+}
