@@ -130,8 +130,18 @@ spec: spec/2026-09-23-1-flatpak-snap-menu.md
     has no snapd or reconciler units.
   - **Rollback:** razer was switched back to generation 2934 and verified, and the
     clone was deleted.
-  - **Still open, with step 9:** the `nixarchy-apply` path, i.e. the panel's `a`
-    on a patched nixarchy.
+  - **Apply path: done.** With nixarchy on `feat/904-flatsnap-apply`, the module
+    imported once in `hosts/razer/nixos/nixarchy.nix`, and
+    `NIXARCHY_FLAKE=<clone>`:
+    - `nixarchy-flatsnap add` wrote the real `~/.config/nixarchy/flatsnap.nix`,
+      and `preflight` returned `ready`.
+    - `apply` ran `nixarchy-apply` → `nh os switch` (`NH_ELEVATION_STRATEGY=passwordless`
+      over SSH; the panel uses pkexec). It copied `flatsnap.nix`, imported it, and
+      ended with `{"nixarchyFlatsnapApply":{"ok":true,...}}`. Both apps ran.
+    - `rm` of both, then `apply` again: both were removed, and `managed` was empty.
+    - The `install.flatsnap` row is in the generated `nixarchy-omarchy-menu.jsonc`.
+    - Rolled back to 2934. Test generations 2935 and 2936 were deleted, the boot
+      menu refreshed, and the test files removed.
 
 - **Step 9, the menu row moved here.** nixarchy's `menu-verbs` check allows
   `nixarchy-plugin <id>` rows only for plugins nixarchy itself ships, and
