@@ -103,8 +103,10 @@ Item {
           }
 
           // A pending confirmation is cancelled by any other real key.
+          var enter = k === Qt.Key_Return || k === Qt.Key_Enter
           if (!modifier && k !== Qt.Key_Y && k !== Qt.Key_A && k !== Qt.Key_X
-              && (fs.pendingDelete !== "" || fs.applyArmed || fs.classicArmed)) {
+              && !(enter && fs.overridesArmed)
+              && (fs.pendingDelete !== "" || fs.applyArmed || fs.classicArmed || fs.overridesArmed)) {
             fs.disarm(); fs.message = ""
           }
 
@@ -293,7 +295,7 @@ Item {
             width: parent.width
             visible: fs.message.length > 0
             text: fs.message
-            color: (fs.applyArmed || fs.classicArmed || fs.pendingDelete !== "") ? Color.urgent : Color.menu.text
+            color: (fs.applyArmed || fs.classicArmed || fs.overridesArmed || fs.pendingDelete !== "") ? Color.urgent : Color.menu.text
           }
           Line {
             width: parent.width

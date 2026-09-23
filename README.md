@@ -43,9 +43,9 @@ Flatpak or Snap ID grammar.
 | `Ctrl+F` / `Ctrl+S` | search Flathub / the Snap Store for what is in the field |
 | `j` `k` / `↓` `↑` | move |
 | `Enter` | on a result: open it; on a card: queue it |
-| `c` | cycle the Snap channel: stable → candidate → beta → edge |
+| `c` | cycle through the channels this Snap publishes: stable → candidate → beta → edge |
 | `x` `x` | switch a Snap to classic confinement (two presses: it removes the sandbox) |
-| `p` | Flatpak overrides, e.g. `Context.filesystems=xdg-pictures:ro` |
+| `p` | Flatpak overrides, e.g. `Context.filesystems=xdg-pictures:ro` (queuing with overrides takes a second `Enter`) |
 | `Tab` | switch between *Add* and *Declared* |
 | `d` then `y` | un-declare the selected app |
 | `a` | apply (runs `nixarchy-apply`; the build log streams into the panel) |
@@ -142,6 +142,7 @@ Un-declare the app and apply. A NixOS rollback restores which apps are
 
 ```bash
 bash tests/cli.sh                     # offline tests (fixtures, no network)
+bash tests/model.sh                   # panel model rules; needs a Wayland session, draws nothing
 nix flake check                       # + shellcheck, module VM test, gating, manifest, colours
 ```
 

@@ -23,6 +23,8 @@ QtObject {
   property bool classic: false
   property bool classicArmed: false   // first x arms, second x confirms
   property string overrides: ""       // "Section.key=value ..." for Flatpaks
+  property bool overridesArmed: false // overrides widen a sandbox: Enter twice
+  onOverridesChanged: overridesArmed = false
 
   property string pendingDelete: ""   // "store:id" waiting for y
   property var willRemove: []         // from preflight, when uninstallUnmanaged is on
@@ -114,9 +116,15 @@ QtObject {
     message = ""
   }
 
+  // Only the channels this snap actually publishes, in risk order; a
+  // channel it does not have would queue fine and fail at apply. No list
+  // from the store means no way to know, so all four are offered.
   function cycleChannel() {
     if (!card || card.store !== "snap") return
-    var all = ["stable", "candidate", "beta", "edge"]
+    var order = ["stable", "candidate", "beta", "edge"]
+    var have = card.channels || []
+    var all = have.length ? order.filter(function (c) { return have.indexOf(c) >= 0 }) : order
+    if (all.length === 0) return
     channel = all[(all.indexOf(channel) + 1) % all.length]
   }
 
@@ -159,6 +167,14 @@ QtObject {
     } else {
       args = ["add", "flatpak", card.id]
       var ov = overrides.trim().split(/\s+/).filter(function (s) { return s.length > 0 })
+      // An override widens (or narrows) the sandbox, so it is confirmed the
+      // way classic confinement is: the first Enter says what it will do.
+      if (ov.length > 0 && !overridesArmed) {
+        overridesArmed = true
+        message = "Enter again: change " + card.id + "'s sandbox with " + ov.join("  ")
+        return
+      }
+      overridesArmed = false
       for (var i = 0; i < ov.length; i++) args.push("--override", ov[i])
     }
     _after = card.name + " queued — a applies"
@@ -214,7 +230,7 @@ QtObject {
     _run(_preflight, ["preflight"])
   }
 
-  function disarm() { applyArmed = false; classicArmed = false; pendingDelete = "" }
+  function disarm() { applyArmed = false; classicArmed = false; overridesArmed = false; pendingDelete = "" }
 
   function _startApply() {
     _applyDone = false
