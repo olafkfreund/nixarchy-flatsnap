@@ -205,5 +205,30 @@ grep -q '^byhand ' "$db" && ok || bad "removed a hand-installed snap"
 reconcile '{"snaps":[{"name":"broken","channel":"stable","classic":false},{"name":"hello-world","channel":"stable","classic":false}]}' >/dev/null; rc=$?
 [ $rc -eq 1 ] && grep -q '^hello-world ' "$db" && ok || bad "partial failure: rc=$rc db=$(cat "$db")"
 
+# ---- preflight / apply, with nix, nixarchy-apply and flatpak stubbed ------
+ab="$work/applybin"; mkdir -p "$ab"
+stub() { printf '#!/bin/sh\n%s\n' "$2" >"$ab/$1"; chmod +x "$ab/$1"; }
+stub nixarchy-apply '# copies apps services advanced flatsnap
+printf "\033[1mbuilding\033[0m\\n50%%\\r100%%\\n"; exit ${APPLY_RC:-0}'
+stub flatpak 'printf "org.gnome.Calculator\\ncom.byhand.App\\n"'
+stub nix 'echo "$NIX_EVAL_ANSWER"'
+pa() { env PATH="$ab:$PATH" bash "$cli" "$@"; }
+
+export NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":false,"declared":["org.gnome.Calculator"]}'
+check "preflight ready" '.ok and .willRemove == []' pa preflight
+NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":true,"declared":["org.gnome.Calculator"]}' \
+  check "preflight lists what uninstallUnmanaged removes" '.willRemove == ["com.byhand.App"]' pa preflight
+out=$(NIX_EVAL_ANSWER='{"hasModule":false,"uninstallUnmanaged":false,"declared":[]}' pa apply); rc=$?
+[ $rc -eq 2 ] && jq -e '.error | test("nixosModules.default")' <<<"$out" >/dev/null && ok || bad "apply without module: rc=$rc $out"
+
+out=$(pa apply); rc=$?
+[ $rc -eq 0 ] && [ "$(sed -n 1p <<<"$out")" = building ] && [ "$(sed -n 2p <<<"$out")" = 100% ] &&
+  jq -e '.nixarchyFlatsnapApply.ok' <<<"$(tail -1 <<<"$out")" >/dev/null && ok || bad "apply stream: $out"
+out=$(APPLY_RC=3 pa apply)
+jq -e '.nixarchyFlatsnapApply == {ok:false,exit:3,message:"nixarchy-apply exited 3"}' <<<"$(tail -1 <<<"$out")" >/dev/null && ok || bad "apply failure: $out"
+
+stub nixarchy-apply 'exit 0'
+out=$(pa preflight); [ $? -eq 2 ] && jq -e '.error | test("update nixarchy")' <<<"$out" >/dev/null && ok || bad "old nixarchy-apply not caught: $out"
+
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -362,6 +362,66 @@ cmd_rm() {
   cmd_list
 }
 
+# ---- preflight / apply ------------------------------------------------------
+
+flake() { printf '%s' "${NIXARCHY_FLAKE:-/etc/nixos}"; }
+
+# One evaluation of this host's configuration, answering what apply needs
+# to know before it runs:
+#   - is the module imported? Without it, the copied flatsnap.nix names
+#     options that do not exist, and the rebuild fails on evaluation.
+#   - does this nixarchy-apply copy flatsnap.nix at all? One from before
+#     the nixarchy patch does not, and the apply would "succeed" doing nothing.
+#   - with uninstallUnmanaged on, which installed Flatpaks will be removed?
+cmd_preflight() {
+  local host ev apply_bin fp
+  host=$(uname -n)
+  apply_bin=$(command -v nixarchy-apply) || die "nixarchy-apply not found: is this nixarchy?"
+  grep -q flatsnap "$apply_bin" ||
+    die "this nixarchy's apply does not copy flatsnap.nix yet; update nixarchy"
+  ev=$(nix eval --json "$(flake)#nixosConfigurations.\"$host\"" --apply '
+    c: {
+      hasModule = (c.options.programs.nixarchy or { }) ? flatsnap;
+      uninstallUnmanaged = c.config.services.flatpak.uninstallUnmanaged or false;
+      declared = map (p: if builtins.isString p then p else p.appId)
+        (c.config.services.flatpak.packages or [ ]);
+    }' 2>/dev/null) || die "could not evaluate nixosConfigurations.$host in $(flake)"
+  fp='[]'
+  if command -v flatpak >/dev/null; then
+    fp=$(flatpak list --app --columns=application 2>/dev/null | jq -Rsc 'split("\n") | map(select(. != ""))')
+  fi
+  jq -cn --argjson e "$ev" --argjson fp "$fp" --arg host "$host" '
+    {
+      ok: $e.hasModule,
+      message: (if $e.hasModule then "ready"
+        else "the flatsnap module is not in nixosConfigurations.\($host): add inputs.nixarchy-flatsnap.nixosModules.default to its modules" end),
+      willRemove: (if $e.uninstallUnmanaged then $fp - $e.declared else [] end)
+    }'
+}
+
+# Copy the selection into the flake and rebuild -- through nixarchy-apply,
+# never around it. Streaming and the pkexec choice follow nixarchy-pkg's
+# cmd_apply; see the comment there for why each is the way it is.
+cmd_apply() {
+  local pf statuses rc filt
+  pf=$(cmd_preflight)
+  jq -e '.ok' <<<"$pf" >/dev/null || { jq -c '{error: .message}' <<<"$pf"; exit 2; }
+  jq -r '.willRemove[] | "uninstallUnmanaged is on: this apply removes \(.)"' <<<"$pf"
+  set +e +o pipefail
+  NO_COLOR=1 NH_ELEVATION_STRATEGY="${NH_ELEVATION_STRATEGY:-pkexec}" \
+    nixarchy-apply --yes --no-preview </dev/null 2>&1 |
+    awk '{ gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\033[()][A-Za-z0-9]/, "")
+           sub(/.*\r/, ""); print; fflush() }'
+  statuses=("${PIPESTATUS[@]}")
+  set -e -o pipefail
+  rc=${statuses[0]}; filt=${statuses[1]}
+  jq -nc --argjson rc "$rc" --argjson filt "$filt" '
+    {nixarchyFlatsnapApply: {
+      ok: ($rc == 0 and $filt == 0), exit: $rc,
+      message: (if $filt != 0 then "the log filter failed (exit \($filt)); nixarchy-apply exited \($rc)"
+                elif $rc == 0 then "applied" else "nixarchy-apply exited \($rc)" end)}}'
+}
+
 main() {
   local verb=${1:-}; shift || true
   case $verb in
@@ -370,7 +430,9 @@ main() {
     list) cmd_list ;;
     add) cmd_add "$@" ;;
     rm) cmd_rm "$@" ;;
-    *) die "usage: nixarchy-flatsnap resolve|search|list|add|rm ..." ;;
+    preflight) cmd_preflight ;;
+    apply) cmd_apply ;;
+    *) die "usage: nixarchy-flatsnap resolve|search|list|add|rm|preflight|apply ..." ;;
   esac
 }
 
