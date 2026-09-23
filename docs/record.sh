@@ -99,9 +99,10 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- the desktop for the take --------------------------------------------
+# Do Not Disturb first, or the theme change's own toast lands in the frame.
+[ "$dnd0" = on ] || run omarchy-shell notifications toggleDnd
 run omarchy-theme-set "Tokyo Night"
 run omarchy-theme-bg-set "$OMARCHY_PATH/themes/tokyo-night/backgrounds/0-winding-road.jpg"
-[ "$dnd0" = on ] || run omarchy-shell notifications toggleDnd
 workspace "$ws"
 hold 3
 
@@ -112,15 +113,17 @@ scene() {
   say "scene $1 @ ${ms}ms"
 }
 still() { run grim -g "$REGION_GRIM" "$OUT/raw-$1.png"; }
-# The panel runs apply itself; this waits for it to finish, not for a key.
+# The panel runs apply itself. Done means: a new system generation exists and
+# no apply is left running. Watching for the process alone misses a cached
+# build that finishes before the first look.
 wait_apply() {
   [ "$DRY" = 1 ] && { say "would wait for apply"; return; }
-  # Preflight (a nix eval) runs first, so apply may not have started yet:
-  # wait for it to appear, then for it to finish.
-  local i
-  for i in $(seq 1 90); do pgrep -f 'nixarchy-flatsnap apply' >/dev/null && break; sleep 1; done
-  [ "$i" -lt 90 ] || die "apply never started (preflight refused? look at the panel)"
-  while pgrep -f 'nixarchy-flatsnap apply' >/dev/null; do sleep 1; done
+  local before=$1
+  for _ in $(seq 1 600); do
+    [ "$(readlink "$PROFILE")" != "$before" ] && ! pgrep -f 'nixarchy-flatsnap apply' >/dev/null && return
+    sleep 1
+  done
+  die "no new generation after 10 minutes (preflight refused? look at the panel)"
 }
 
 # ---- record -----------------------------------------------------------------
@@ -166,9 +169,10 @@ keys -k Tab
 hold 2; still 06-declared
 
 scene apply
+gen_before=$(readlink "$PROFILE")
 keys a
-hold 10; still 07-apply-log
-wait_apply
+hold 4; still 07-apply-log
+wait_apply "$gen_before"
 scene applied
 # nix-flatpak installs in its own unit, which can still be running after the
 # switch returns: launch only once Flatpak has the app.
@@ -176,12 +180,17 @@ if [ "$DRY" = 0 ]; then
   for _ in $(seq 1 180); do flatpak info org.gnome.Calculator >/dev/null 2>&1 && break; sleep 1; done
   flatpak info org.gnome.Calculator >/dev/null 2>&1 || die "Calculator never installed; see flatpak-managed-install.service"
 fi
-hold 4
+# The switch reloads Hyprland, which closes open panels (a nixarchy rebuild
+# does this for every panel). Reopen on Declared: both apps say installed.
+[ "$(omarchy-shell shell isOpen "$PANEL")" = true ] || run omarchy-shell shell toggle "$PANEL" '{}'
+hold 2; keys -k Tab
+hold 3; still 08-installed
+hold 2
 
 scene calculator
 run omarchy-shell shell toggle "$PANEL" '{}'
 run setsid -f flatpak run org.gnome.Calculator
-hold 6; still 08-calculator
+hold 6; still 09-calculator
 run pkill -f gnome-calculator
 hold 1
 
@@ -190,10 +199,13 @@ run omarchy-shell shell toggle "$PANEL" '{}'
 hold 2; keys -k Tab
 hold 1; keys d y
 hold 2; keys d y
+gen_before=$(readlink "$PROFILE")
 hold 2; keys a
-wait_apply
+wait_apply "$gen_before"
 scene removed
-hold 4
+[ "$(omarchy-shell shell isOpen "$PANEL")" = true ] || run omarchy-shell shell toggle "$PANEL" '{}'
+hold 2; keys -k Tab
+hold 3
 run omarchy-shell shell toggle "$PANEL" '{}'
 hold 1
 
@@ -210,7 +222,7 @@ NIXARCHY_SRC=${NIXARCHY_SRC:-$(nix flake prefetch --json github:olafkfreund/nixa
 # The build log, cut to its first and last 3 s: the rebuild in between is
 # nixos-rebuild, not this plugin, and the caption says it was shortened.
 ms_of() { awk -F'\t' -v s="$1" '$2 == s { print $1; exit }' "$OUT/scenes.tsv"; }
-cut_from=$(( ($(ms_of apply) + 3000) / 1000 ))
+cut_from=$(( ($(ms_of apply) + 6000) / 1000 ))
 cut_to=$(( ($(ms_of applied) - 3000) / 1000 ))
 cut2_from=$(( ($(ms_of remove) + 8000) / 1000 ))
 cut2_to=$(( ($(ms_of removed) - 3000) / 1000 ))
@@ -223,7 +235,7 @@ run ffmpeg -hide_banner -loglevel error -i "$OUT/raw.mp4" \
   -fps_mode vfr "$OUT/frames/%04d.png"
 run bash "$NIXARCHY_SRC/tests/demo/encode-gif.sh" "$OUT/frames" "$OUT/flatsnap.gif"
 run bash "$NIXARCHY_SRC/tests/demo/verify-frames.sh" "$OUT/flatsnap.gif" \
-  --expect Calculator --expect Flatpak --expect applied \
+  --expect Calculator --expect Flatpak --expect installed \
   --forbid 'error|failed|refused' --max-bytes 1000000 --dump "$OUT/verify"
 
 for f in "$OUT"/raw-*.png; do
