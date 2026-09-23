@@ -133,9 +133,9 @@
                 { boot.isContainer = true; system.stateVersion = "26.05"; programs.nixarchy.flatsnap.snaps = [ { name = "hello-world"; } ]; }
               ];
             }).config.systemd.services.nixarchy-flatsnap-snaps.path != [ ]) "flatsnap output does not compose with an existing nix-snapd import";
-            # The menu row lands through nixarchy's extraEntries when the host
-            # has that option (stand-in declaration below), and not otherwise.
-            assert lib.assertMsg ((nixpkgs.lib.nixosSystem {
+            # nixarchy owns the Install -> Flatpak & Snap row (olafkfreund/nixarchy#914);
+            # this module must not add a second one through extraEntries.
+            assert lib.assertMsg (!((nixpkgs.lib.nixosSystem {
               inherit system;
               modules = [
                 self.nixosModules.default
@@ -143,7 +143,7 @@
                 { options.programs.nixarchy.menu.extraEntries = lib.mkOption { type = lib.types.attrsOf (lib.types.attrsOf lib.types.anything); default = { }; }; }
                 { boot.isContainer = true; system.stateVersion = "26.05"; }
               ];
-            }).config.programs.nixarchy.menu.extraEntries."install.flatsnap".action == "nixarchy-plugin nixarchy.flatsnap") "menu row missing on a nixarchy host";
+            }).config.programs.nixarchy.menu.extraEntries ? "install.flatsnap")) "the module still adds its own menu row";
             pkgs.runCommand "nixarchy-flatsnap-gating" { } "touch $out";
 
           # The declarations merge rather than replace, Flathub survives, and
