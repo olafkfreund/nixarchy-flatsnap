@@ -10,7 +10,7 @@
 # services.snap declared twice. flake.nix offers `default` (this plus
 # nix-snapd) and `flatsnap` (this alone). The reconciler uses the host's own
 # snap CLI, so it always matches the daemon that is actually running.
-{ config, lib, pkgs, ... }:
+{ config, options, lib, pkgs, ... }:
 let
   cfg = config.programs.nixarchy.flatsnap;
 
@@ -81,6 +81,20 @@ in
   };
 
   config = lib.mkMerge [
+    # Install -> Flatpak & Snap in the Omarchy menu, through nixarchy's own
+    # extension option. Only where that option exists, so `default` still
+    # evaluates on a host without nixarchy. `when` hides the row until the
+    # plugin is turned on, the same shape as nixarchy's install.packages.
+    (lib.optionalAttrs (lib.hasAttrByPath [ "programs" "nixarchy" "menu" "extraEntries" ] options) {
+      programs.nixarchy.menu.extraEntries."install.flatsnap" = {
+        icon = "󰏗";
+        label = "Flatpak & Snap";
+        action = "nixarchy-plugin nixarchy.flatsnap";
+        when = "nixarchy-plugin --enabled nixarchy.flatsnap";
+        description = "Paste a Flathub or Snapcraft link and install it declaratively";
+      };
+    })
+
     (lib.mkIf (cfg.flatpaks != [ ]) {
       services.flatpak.enable = true;
       # A list option: this merges with nixarchy's curated flatpaks. `remotes`

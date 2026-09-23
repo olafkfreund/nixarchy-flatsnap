@@ -133,6 +133,16 @@ spec: spec/2026-09-23-1-flatpak-snap-menu.md
   - **Still open, with step 9:** the `nixarchy-apply` path, i.e. the panel's `a`
     on a patched nixarchy.
 
+- **Step 9, the menu row moved here.** nixarchy's `menu-verbs` check allows
+  `nixarchy-plugin <id>` rows only for plugins nixarchy itself ships, and
+  shipping this one would mean a nixarchy input, a default-on plugin and more
+  tests (out of scope). nixarchy has `programs.nixarchy.menu.extraEntries` for
+  outside rows, so the module sets `install.flatsnap` there, guarded by that
+  option's existence. The nixarchy PR (#904) is only the `flatsnap` part in
+  `nixarchy-apply`'s loop, plus its generated header comment. The
+  gating check asserts the row is present with the option, and a mutant without
+  the guard fails on hosts without it.
+
 ## Steps
 
 Each step is one commit on `feat/1-flatpak-snap-menu`.
