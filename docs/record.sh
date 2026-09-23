@@ -16,9 +16,13 @@
 # $OUT/0N-*.webp stills. Nothing is copied into a repository from here.
 set -euo pipefail
 
-DRY=0
-[ "${1:-}" = --dry-run ] && DRY=1
-: "${START_GEN:?START_GEN: the system generation to return to}"
+DRY=0 ENCODE_ONLY=0
+case "${1:-}" in
+  --dry-run) DRY=1 ;;
+  # Re-encode and re-gate an existing take in $OUT, without recording again.
+  --encode-only) ENCODE_ONLY=1 ;;
+esac
+[ "$ENCODE_ONLY" = 1 ] || : "${START_GEN:?START_GEN: the system generation to return to}"
 OUT=${OUT:-/tmp/flatsnap-media}
 PANEL=nixarchy.flatsnap
 PROFILE=/nix/var/nix/profiles/system
@@ -39,11 +43,80 @@ keys() { run wtype -d 40 "$@"; }
 workspace() { run hyprctl dispatch "hl.dsp.focus({ workspace = \"$1\" })" >/dev/null 2>&1 ||
   run hyprctl dispatch workspace "$1"; }
 
+# ---- encode and gate ------------------------------------------------------
+# Everything here reads /dev/null, not stdin: this script arrives on stdin
+# (`bash -s`), and ffmpeg reading it swallowed the rest of the script once
+# ("bash" arrived as "ash").
+encode_and_gate() {
+  NIXARCHY_SRC=${NIXARCHY_SRC:-$(nix flake prefetch --json github:olafkfreund/nixarchy | jq -r .storePath)}
+  [ -f "$NIXARCHY_SRC/tests/demo/encode-gif.sh" ] || die "no encode-gif.sh under $NIXARCHY_SRC"
+
+  # Stills first: a gate that fails still leaves them to look at.
+  local f name
+  for f in "$OUT"/raw-*.png; do
+    [ -e "$f" ] || continue
+    name=$(basename "$f" .png)
+    run magick "$f" -resize 1280x800 -quality 85 "$OUT/${name#raw-}.webp"
+  done
+
+  # One take, three scene GIFs. nixarchy's gate caps a GIF at 1 MB and says
+  # to cut the scene rather than degrade the encoding; the whole take came to
+  # 4.1 MB. Each range comes from scenes.tsv; the build logs keep their first
+  # 3 s and last ~2 s (the captions say "build log shortened").
+  s_of() { awk -F'\t' -v s="$1" '$2 == s { printf "%.2f", $1 / 1000; exit }' "$OUT/scenes.tsv"; }
+  local open flathub snap apply applied calc remove removed
+  open=$(s_of open); snap=$(s_of snap-search); apply=$(s_of apply)
+  applied=$(s_of applied); calc=$(s_of calculator); remove=$(s_of remove); removed=$(s_of removed)
+  flathub=$(s_of flathub)
+  : "$flathub"
+  local d_apply d_remove
+  d_apply=$(awk -v a="$apply" -v b="$applied" 'BEGIN { printf "%.2f", b - a - 2 }')
+  d_remove=$(awk -v a="$remove" -v b="$removed" 'BEGIN { printf "%.2f", b - a - 3 }')
+
+  scene_gif() { # name from to [cut_from cut_to] -- times in seconds
+    local n=$1 from=$2 to=$3 vf
+    vf="trim=$from:$to,setpts=PTS-STARTPTS"
+    [ $# -gt 3 ] && vf+=",select='not(between(t,$4,$5))',setpts=N/FRAME_RATE/TB"
+    run rm -rf "$OUT/frames-$n" "$OUT/flatsnap-$n.gif"
+    run mkdir -p "$OUT/frames-$n"
+    run ffmpeg -nostdin -hide_banner -loglevel error -i "$OUT/raw.mp4" \
+      -vf "$vf,fps=4,mpdecimate" -fps_mode vfr "$OUT/frames-$n/%04d.png"
+    run bash "$NIXARCHY_SRC/tests/demo/encode-gif.sh" "$OUT/frames-$n" "$OUT/flatsnap-$n.gif"
+  }
+  scene_gif flatpak "$open" "$snap"
+  scene_gif snap "$snap" "$apply"
+  # Ends half a second before the panel closes for the Calculator: that
+  # frame repaints the whole desktop and costs more than it shows.
+  local calc_end
+  calc_end=$(awk -v c="$calc" 'BEGIN { printf "%.2f", c - 0.5 }')
+  scene_gif apply "$apply" "$calc_end" 3 "$d_apply"
+  # Removal is stills (10, 11), not a GIF: it changes a line of text at a
+  # time, and verify-frames rightly calls that a static recording.
+  : "$remove" "$removed" "$d_remove"
+  say "cut: apply log 3s-${d_apply}s"
+
+  gate() { # gif, then --expect/--forbid pairs
+    local g=$1; shift
+    run bash "$NIXARCHY_SRC/tests/demo/verify-frames.sh" "$OUT/flatsnap-$g.gif" "$@" \
+      --forbid 'error|failed|refused' --max-bytes 1000000 --dump "$OUT/verify-$g"
+  }
+  gate flatpak --expect Calculator --expect Flatpak
+  gate snap --expect hello --expect confinement
+  gate apply --expect installed
+  say "done: $OUT/flatsnap-{flatpak,snap,apply}.gif and stills; look at every one before committing"
+}
+
 # ---- the session's handles ------------------------------------------------
 # ssh has none of them; the running shell does.
 qs=$(pgrep -f quickshell-wrapped_ | head -1) || die "no omarchy-shell running"
 while IFS= read -r kv; do export "${kv?}"; done < <(tr '\0' '\n' <"/proc/$qs/environ" |
   grep -E '^(WAYLAND_DISPLAY|HYPRLAND_INSTANCE_SIGNATURE|XDG_RUNTIME_DIR|OMARCHY_PATH|DBUS_SESSION_BUS_ADDRESS)=')
+
+if [ "$ENCODE_ONLY" = 1 ]; then
+  [ -s "$OUT/raw.mp4" ] && [ -s "$OUT/scenes.tsv" ] || die "no take in $OUT to encode"
+  encode_and_gate </dev/null
+  exit
+fi
 
 # ---- refuse anything but the clean starting state ------------------------
 [ "$(readlink "$PROFILE")" = "system-$START_GEN-link" ] ||
@@ -203,7 +276,9 @@ hold 1
 scene remove
 run omarchy-shell shell toggle "$PANEL" '{}'
 hold 2; keys -k Tab
-hold 1; keys d; keys y
+hold 1; keys d
+hold 2; still 10-remove-confirm   # "y removes ... at the next apply", in red
+keys y
 hold 2; keys d; keys y
 gen_before=$(readlink "$PROFILE")
 hold 2; keys a
@@ -211,7 +286,7 @@ wait_apply "$gen_before"
 scene removed
 [ "$(omarchy-shell shell isOpen "$PANEL")" = true ] || run omarchy-shell shell toggle "$PANEL" '{}'
 hold 2; keys -k Tab
-hold 3
+hold 3; still 11-removed          # "Nothing declared yet."
 run omarchy-shell shell toggle "$PANEL" '{}'
 hold 1
 
@@ -221,32 +296,4 @@ if [ "$DRY" = 0 ]; then
   rec_pid=""
 fi
 
-# ---- encode and gate ------------------------------------------------------
-NIXARCHY_SRC=${NIXARCHY_SRC:-$(nix flake prefetch --json github:olafkfreund/nixarchy | jq -r .storePath)}
-[ -f "$NIXARCHY_SRC/tests/demo/encode-gif.sh" ] || die "no encode-gif.sh under $NIXARCHY_SRC"
-
-# The build log, cut to its first and last 3 s: the rebuild in between is
-# nixos-rebuild, not this plugin, and the caption says it was shortened.
-ms_of() { awk -F'\t' -v s="$1" '$2 == s { print $1; exit }' "$OUT/scenes.tsv"; }
-cut_from=$(( ($(ms_of apply) + 6000) / 1000 ))
-cut_to=$(( ($(ms_of applied) - 3000) / 1000 ))
-cut2_from=$(( ($(ms_of remove) + 8000) / 1000 ))
-cut2_to=$(( ($(ms_of removed) - 3000) / 1000 ))
-say "cutting ${cut_from}s-${cut_to}s and ${cut2_from}s-${cut2_to}s"
-
-run rm -rf "$OUT/frames"
-run mkdir -p "$OUT/frames"
-run ffmpeg -hide_banner -loglevel error -i "$OUT/raw.mp4" \
-  -vf "select='not(between(t,$cut_from,$cut_to)+between(t,$cut2_from,$cut2_to))',setpts=N/FRAME_RATE/TB,fps=4,mpdecimate" \
-  -fps_mode vfr "$OUT/frames/%04d.png"
-run bash "$NIXARCHY_SRC/tests/demo/encode-gif.sh" "$OUT/frames" "$OUT/flatsnap.gif"
-run bash "$NIXARCHY_SRC/tests/demo/verify-frames.sh" "$OUT/flatsnap.gif" \
-  --expect Calculator --expect Flatpak --expect installed \
-  --forbid 'error|failed|refused' --max-bytes 1000000 --dump "$OUT/verify"
-
-for f in "$OUT"/raw-*.png; do
-  [ -e "$f" ] || continue
-  name=$(basename "$f" .png)
-  run magick "$f" -resize 1280x800 -quality 85 "$OUT/${name#raw-}.webp"
-done
-say "done: $OUT/flatsnap.gif and stills; look at every one before committing"
+encode_and_gate </dev/null
