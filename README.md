@@ -10,6 +10,12 @@ declares Flatpaks for a curated handful. This plugin covers the rest, without
 falling back to `flatpak install` in a terminal and hoping the next rebuild
 keeps it.
 
+![Pasting a Flathub link for GNOME Calculator into the Flatpak & Snap panel: its card shows the publisher, license and sandbox permissions, and Enter queues it](https://olafkfreund.github.io/nixarchy-flatsnap/img/flatsnap-flatpak.gif)
+
+A real session on a nixarchy laptop. The Snap search, the classic
+confirmation, and applying (build log shortened) are on
+[the site](https://olafkfreund.github.io/nixarchy-flatsnap/).
+
 ## What you get
 
 | Piece | What it does |
