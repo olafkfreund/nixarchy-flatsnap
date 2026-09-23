@@ -124,6 +124,12 @@ back up, write, run `nix-instantiate --parse`, and restore the backup on failure
   `flatpaks.uninstallUnmanaged`. If that is on, `a` lists what the apply would
   remove and asks for a second `a`.
 
+**Removing a Snap deletes its data without a snapshot.** snapd normally saves a
+snapshot of the data when a snap is removed. On NixOS that step fails (it runs
+`sudo` under PAM), so the reconciler removes with `--purge`. The data would be
+deleted either way; the snapshot backup is what you give up. Copy anything you
+want to keep out of `~/snap/<name>` before un-declaring it.
+
 ## Rollback
 
 Un-declare the app and apply. A NixOS rollback restores which apps are

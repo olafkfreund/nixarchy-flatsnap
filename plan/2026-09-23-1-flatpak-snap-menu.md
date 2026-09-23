@@ -111,6 +111,12 @@ spec: spec/2026-09-23-1-flatpak-snap-menu.md
   The test file was deleted afterwards. **Dev installs: stage outside
   `plugins/` and `mv` in.**
 
+- **Step 10, `snap remove --purge`.** On razer, removal failed. snapd's
+  automatic pre-removal snapshot runs `sudo`, which fails under NixOS PAM. The
+  reconciler now removes with `--purge`: the data is deleted as before, only
+  the (impossible) snapshot is skipped. The README says so, and the test stub
+  refuses a remove without `--purge`.
+
 ## Steps
 
 Each step is one commit on `feat/1-flatpak-snap-menu`.

@@ -177,7 +177,7 @@ case $1 in
   list) echo "Name Version Rev Tracking Publisher Notes"; while read -r n t; do echo "$n 1.0 1 $t pub -"; done <"$db" ;;
   install) ch=${3#--channel=}; [ "$2" = broken ] && exit 1; echo "$2 latest/$ch" >>"$db" ;;
   refresh) ch=${3#--channel=}; sed -i "s|^$2 .*|$2 latest/$ch|" "$db" ;;
-  remove) sed -i "/^$2 /d" "$db" ;;
+  remove) [ "$2" = --purge ] || exit 1; sed -i "/^$3 /d" "$db" ;;
 esac
 STUB
 chmod +x "$work/fakebin/snap"

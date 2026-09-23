@@ -50,7 +50,11 @@ while read -r name; do
   if grep -qxF "$name" <<<"$declared"; then keep+=("$name"); continue; fi
   if is_installed "$name"; then
     echo "remove $name"
-    if ! snap remove "$name"; then failed=1; keep+=("$name"); fi
+    # --purge: snapd's automatic pre-removal snapshot shells out to sudo,
+    # which fails under NixOS PAM ("pam_open_session: Module is unknown"),
+    # so a plain remove never succeeds here. The snap's data goes either
+    # way; --purge only skips the snapshot snapd cannot take on NixOS.
+    if ! snap remove --purge "$name"; then failed=1; keep+=("$name"); fi
   fi
 done <"$managed"
 printf '%s\n' "${keep[@]}" | grep -v '^$' >"$managed.new" || true
