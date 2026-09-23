@@ -77,8 +77,11 @@ let fs = inputs.nixarchy-flatsnap.packages.${pkgs.stdenv.hostPlatform.system}; i
 Then enable it once: `omarchy plugin enable nixarchy.flatsnap`.
 
 **Requirements:**
-- nixarchy's `nixarchy-apply` must copy `flatsnap.nix` into the flake. `nixarchy-flatsnap preflight`
-  tells you if yours does not.
+- nixarchy's `nixarchy-apply` must copy `flatsnap.nix` into the flake. That lands with
+  [olafkfreund/nixarchy#906](https://github.com/olafkfreund/nixarchy/pull/906), and
+  `nixarchy-flatsnap preflight` tells you if yours does not do it yet.
+- The *Install → Flatpak & Snap* menu row comes from this module, through nixarchy's
+  `programs.nixarchy.menu.extraEntries`.
 - The module relies on nix-flatpak's `services.flatpak.*` options, which nixarchy
   already imports. Outside nixarchy, import
   `github:gmodena/nix-flatpak` yourself.
