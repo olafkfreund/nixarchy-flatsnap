@@ -11,6 +11,34 @@ Branch `fix/36-footer-glitches`. This merges **first** in the batch:
 Each later branch is rebased onto the one before it, and `tests/model.sh`
 runs again after each rebase.
 
+## Note, 2026-09-25: razer moves to one combined session (user decision)
+
+The razer check (step 5) no longer runs for this PR alone. It runs in
+**one combined razer session after #36, #28, #27 and #26 have all
+merged.**
+
+- Steps 1–4 are implemented. Step 4 (cause A: the card keeps its bottom
+  edge) ships on local evidence as the most likely cause.
+- The combined session confirms the cause. If it turns out to be B1 or
+  B2, a small follow-up fix follows. Step 4 is not held back.
+- One small real apply is allowed in that session, to check the
+  ended-log hint.
+- The relaunch and scale commands are the ones recorded in
+  plan/2026-09-24-15-card-overflow.md (step 12):
+  - `hyprctl dispatch 'hl.dsp.exec_cmd("env NIXARCHY_FLAKE=/tmp/flake-36 omarchy-launch-shell")'`
+  - `hyprctl eval 'hl.monitor({ output = "eDP-1", mode = "1920x1080", position = "0x0", scale = 2 })'`,
+    after recording the original line with `hyprctl monitors`.
+- Step 6's PR therefore says `Closes #36`, with the razer check pending
+  in the combined session.
+
+**Deviations in step 2,** found while implementing: two existing checks
+asserted the old texts, so they change with the hints.
+
+- `tests/model.qml:25`: the add hint is checked for `Enter open`, not
+  `Ctrl+F`. The list hint no longer names Ctrl+F.
+- `:29-30`: the Flatpak card hint is checked for `j k scroll`, not
+  `PgUp PgDn scroll`.
+
 ## Approved decisions
 
 This section is self-contained. The intent and spec do not need to be

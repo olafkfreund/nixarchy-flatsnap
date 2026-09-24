@@ -44,13 +44,20 @@ QtObject {
   // Which view has the keys, and the footer's keys for it: only what does
   // something there, so the line stays short in a small window.
   readonly property string view: showingLog ? "log" : tab === 1 ? "declared" : card ? "card" : "add"
+  // Set by Menu.qml: a text field has the keyboard, so letters are typed,
+  // not run, and the footer must not offer them (#36).
+  property bool typing: false
+  // One line at scale 2 on 1080p: two spaces between keys, 72 characters
+  // at most (tests/model.qml checks every state).
   readonly property string keysHint: {
-    if (view === "log") return "j k PgUp PgDn scroll   Esc stops watching (the build carries on)"
-    var s = view === "declared" ? "j k move   d remove   a apply   Tab Add"
-          : view === "add" ? "Enter look up / open   Ctrl+F Flathub   Ctrl+S Snap   j k move   Tab Declared   a apply"
-          : card.store === "snap" ? "j k PgUp PgDn scroll   c channel   x classic   Enter queue   a apply"
-          : "j k PgUp PgDn scroll   p overrides   Enter queue   a apply"
-    return s + (applyLog.length > 0 ? "   l log" : "") + "   Esc back"
+    if (view === "log") return "j k PgUp PgDn scroll  " + (applying ? "Esc leaves it running" : "Esc back")
+    if (typing) return view === "card" ? "Enter queue  Esc back"
+                     : "Enter look up  Ctrl+F Flathub  Ctrl+S Snap  Tab Declared  Esc back"
+    var s = view === "declared" ? "j k move  d remove  a apply  Tab Add"
+          : view === "add" ? "j k move  Enter open  / edit  Tab Declared  a apply"
+          : card.store === "snap" ? "j k scroll  c channel  x classic  Enter queue  a apply"
+          : "j k scroll  p overrides  Enter queue  a apply"
+    return s + (applyLog.length > 0 ? "  l log" : "") + "  Esc back"
   }
 
   // Reopening during a build opens on its log: the build is still running.
