@@ -46,22 +46,37 @@ ShellRoot {
     fs.cycleChannel(); fs.cycleChannel()
     t.ok(fs.channel === "stable" && fs.classic, "a chosen classic survives cycling back")
 
+    // The CLI's sandboxEscapes (ESCAPES_JSON in bin/nixarchy-flatsnap), as a
+    // flatpak card carries it. tests/cli.sh checks the CLI's own copy.
+    var esc = [
+      { section: "Context", key: "filesystems", values: ["host", "host-os", "host-etc"], says: "the host filesystem" },
+      { section: "Context", key: "filesystems", values: ["home", "~"], says: "your whole home folder" },
+      { section: "Context", key: "sockets", values: ["session-bus"], says: "the whole session bus" },
+      { section: "Context", key: "sockets", values: ["system-bus"], says: "the whole system bus" },
+      { section: "Context", key: "sockets", values: ["ssh-auth"], says: "your SSH agent and its keys" },
+      { section: "Context", key: "sockets", values: ["gpg-agent"], says: "your GPG agent and its keys" },
+      { section: "Context", key: "devices", values: ["all"], says: "every device" },
+      { section: "Session Bus Policy", key: "org.freedesktop.Flatpak", values: ["talk", "own"], says: "running commands outside the sandbox" },
+      { section: "System Bus Policy", key: "*", values: ["talk", "own"], says: "talking to system services" }
+    ]
+
     // Overrides: the first Enter only arms and says what it will do.
-    fs._showCard({ store: "flatpak", id: "org.gimp.GIMP", name: "GIMP", permissions: {} })
+    fs._showCard({ store: "flatpak", id: "org.gimp.GIMP", name: "GIMP", permissions: {}, sandboxEscapes: esc })
     fs.overrides = "Context.filesystems=home"
     fs.queue()
-    t.ok(fs.overridesArmed, "first Enter arms")
+    t.ok(fs.queueArmed, "first Enter arms")
     // busy is set synchronously by every write; Process.running is not.
     t.ok(!fs.busy, "first Enter must not write")
-    t.ok(fs.message.indexOf("Context.filesystems=home") >= 0, "the message names the override: " + fs.message)
+    t.ok(fs.message.indexOf("Context.filesystems=home") >= 0 && fs.message.indexOf("ESCAPES") >= 0,
+         "the message names the escaping override: " + fs.message)
 
     // Editing the overrides after arming disarms: confirm what you see.
     fs.overrides = "Context.filesystems=xdg-pictures:ro"
-    t.ok(!fs.overridesArmed, "editing the overrides disarms")
+    t.ok(!fs.queueArmed, "editing the overrides disarms")
 
     // Any other key disarms too (Menu.qml calls disarm()).
     fs.queue(); fs.disarm()
-    t.ok(!fs.overridesArmed, "disarm() clears the override confirmation")
+    t.ok(!fs.queueArmed, "disarm() clears the override confirmation")
 
     // Arm, then confirm: now it writes, with the override on argv.
     fs.queue(); fs.queue()
@@ -73,7 +88,76 @@ ShellRoot {
     fs.busy = false
     fs._showCard({ store: "flatpak", id: "org.gnome.Calculator", name: "Calculator", permissions: {} })
     fs.queue()
-    t.ok(!fs.overridesArmed, "no overrides: nothing to confirm")
+    t.ok(!fs.queueArmed, "no overrides: nothing to confirm")
+
+    // ---- #12: every classic snap confirms on Enter -----------------------
+    fs.busy = false
+    fs._showCard({ store: "snap", id: "code", name: "code", channels: ["stable"], confinement: "classic", classic: true })
+    fs.queue()
+    t.ok(fs.queueArmed && !fs.busy && fs.message.indexOf("WITHOUT a sandbox") >= 0,
+         "store classic: the first Enter arms and says so: " + fs.message)
+    fs.queue()
+    t.ok(fs.busy && fs._writer.command.indexOf("--classic") >= 0, "store classic: the second Enter writes --classic")
+    fs.busy = false
+
+    fs._showCard({ store: "snap", id: "hello-world", name: "Hello", channels: ["stable"], confinement: "strict" })
+    fs.toggleClassic(); fs.toggleClassic()
+    fs.queue()
+    t.ok(fs.queueArmed && !fs.busy && fs.message.indexOf("WITHOUT a sandbox") >= 0, "x x then Enter arms the same way")
+    fs.toggleClassic()
+    t.ok(!fs.queueArmed && !fs.classic, "toggleClassic() clears the arm")
+    fs.queue()
+    t.ok(fs.busy && fs._writer.command.indexOf("--classic") < 0, "a strict snap queues on one Enter")
+    fs.busy = false
+
+    fs._showCard({ store: "snap", id: "tool", name: "Tool", channels: ["edge", "stable"], confinement: "classic",
+                   confinements: { stable: "classic", edge: "classic" }, classic: true })
+    fs.queue(); fs.cycleChannel()
+    t.ok(!fs.queueArmed, "cycleChannel() clears the arm")
+    fs.queue()
+    fs._showCard({ store: "flatpak", id: "org.gnome.Calculator", name: "Calculator", permissions: {}, sandboxEscapes: esc })
+    t.ok(!fs.queueArmed, "a new card clears the arm")
+
+    // ---- #12: sandbox escapes are named; other overrides are not -------
+    // No Bus Policy case: the field splits on spaces, so a section with a
+    // space cannot be typed there (see plan/, step 6).
+    var escaping = ["Context.filesystems=home", "Context.filesystems=host:ro", "Context.filesystems=~",
+                    "Context.sockets=system-bus", "Context.sockets=ssh-auth", "Context.sockets=gpg-agent",
+                    "Context.devices=all"]
+    for (var e = 0; e < escaping.length; e++) {
+      fs.overrides = escaping[e]; fs.queue()
+      t.ok(fs.queueArmed && !fs.busy && fs.message.indexOf("ESCAPES") >= 0 && fs.message.indexOf(escaping[e]) >= 0,
+           escaping[e] + " is named as an escape: " + fs.message)
+      fs.disarm()
+    }
+    var ordinary = ["Context.filesystems=xdg-pictures:ro", "Context.filesystems=~/Games",
+                    "Context.filesystems=!host", "Context.features=devel", "Environment.LC_ALL=C.UTF-8"]
+    for (var o = 0; o < ordinary.length; o++) {
+      fs.overrides = ordinary[o]; fs.queue()
+      t.ok(fs.queueArmed && fs.message.indexOf("ESCAPES") < 0 && fs.message.indexOf(ordinary[o]) >= 0,
+           ordinary[o] + " gets the ordinary prompt: " + fs.message)
+      fs.disarm()
+    }
+    // Only the escaping one is named when both are typed.
+    fs.overrides = "Context.filesystems=xdg-pictures:ro Context.sockets=ssh-auth"; fs.queue()
+    t.ok(fs.message.indexOf("ESCAPES") >= 0 && fs.message.indexOf("ssh-auth") >= 0, "mixed: the escape is named: " + fs.message)
+    fs.disarm()
+    // No list on the card (an older CLI): every override is treated as one.
+    fs._showCard({ store: "flatpak", id: "org.gnome.Calculator", name: "Calculator", permissions: {} })
+    fs.overrides = "Context.filesystems=xdg-pictures:ro"; fs.queue()
+    t.ok(fs.message.indexOf("ESCAPES") >= 0, "no sandboxEscapes: warn as an escape: " + fs.message)
+    fs.disarm(); fs.overrides = ""
+
+    // ---- #12: removing a snap says its data goes -------------------------
+    fs.tab = 1; fs.cursor = 0; fs.pendingDelete = ""
+    fs.declared = [{ store: "snap", id: "code" }]
+    fs.remove()
+    t.ok(fs.message.indexOf("DELETES its data") >= 0, "snap removal says the data goes: " + fs.message)
+    fs.disarm()
+    fs.declared = [{ store: "flatpak", id: "org.gnome.Calculator" }]
+    fs.remove()
+    t.ok(fs.pendingDelete !== "" && fs.message.indexOf("DELETES") < 0, "flatpak removal does not: " + fs.message)
+    fs.disarm(); fs.tab = 0
 
     // ---- #10: a running apply blocks edits and stays visible ------------
     // model.sh runs this on a PATH where nixarchy-apply is a stub.
