@@ -7,9 +7,10 @@
 #
 # nix-snapd is not imported here either, for the same reason: a host that
 # already imports it (nixos_config does, for every host) would get
-# services.snap declared twice. flake.nix offers `default` (this plus
-# nix-snapd) and `flatsnap` (this alone). The reconciler uses the host's own
-# snap CLI, so it always matches the daemon that is actually running.
+# services.snap declared twice. flake.nix's `default` is this plus
+# nix-snapd; a host with its own nix-snapd imports this file by path. The
+# reconciler uses the host's own snap CLI, so it always matches the daemon
+# that is actually running.
 { config, lib, pkgs, ... }:
 let
   cfg = config.programs.nixarchy.flatsnap;
@@ -81,7 +82,6 @@ in
   };
 
   config = lib.mkMerge [
-
     (lib.mkIf (cfg.flatpaks != [ ]) {
       services.flatpak.enable = true;
       # A list option: this merges with nixarchy's curated flatpaks. `remotes`
