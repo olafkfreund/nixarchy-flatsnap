@@ -396,8 +396,7 @@ Item {
           Line {
             width: parent.width
             opacity: 0.7
-            text: fs.showingLog ? "Esc stops watching (the build carries on)"
-                : "Enter look up / queue   Ctrl+F Flathub   Ctrl+S Snap   Tab Add/Declared   j k move   c channel   x classic   p overrides   d remove   a apply   l log   Esc back"
+            text: fs.keysHint   // only the keys for this view
           }
         }
       }
