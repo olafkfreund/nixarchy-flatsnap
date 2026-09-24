@@ -317,3 +317,12 @@ The full evidence is on #13
   - The reconciler stub uses `node 24/stable classic`. A plan with `stable`
     makes no `refresh`, and this test reproduces the razer log line exactly
     before the fix. A real change to `edge` still refreshes.
+- **razer re-check (step 9 verify), 2026-09-24.** Bus read and claim first.
+  I built the `/tmp/nc-13` clone with `--override-input
+  nixarchy/nixarchy-flatsnap github:olafkfreund/nixarchy-flatsnap/bba22fd`
+  and activated it with `switch-to-configuration test`. The reconciler
+  installed `node` as `24/stable`. Two later `systemctl restart`s, with no
+  changes, ran the fixed reconciler (its store path contains `risk()`) and
+  made **no** `refresh` call. Before the fix, every run made one. `node` was
+  purged, `managed` is empty, and razer is back on generation 2949 with 0
+  failed units. "Done" was posted on the bus.
