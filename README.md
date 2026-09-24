@@ -47,7 +47,8 @@ Flatpak or Snap ID grammar.
 |---|---|
 | *(paste)* then `Enter` | look it up |
 | `Ctrl+F` / `Ctrl+S` | search Flathub / the Snap Store for what is in the field |
-| `j` `k` / `↓` `↑` | move |
+| `j` `k` / `↓` `↑` | move; on a card or the build log, scroll |
+| `PgUp` `PgDn` | scroll a card or the build log by a page |
 | `/` | put the cursor back in the field |
 | `Enter` | on a result: open it; on a card: queue it |
 | `c` | cycle through the channels this Snap publishes: stable → candidate → beta → edge |
@@ -57,7 +58,7 @@ Flatpak or Snap ID grammar.
 | `Tab` | switch between *Add* and *Declared* |
 | `d` then `y` | un-declare the selected app |
 | `a` then `a` | apply: the first `a` checks `flatsnap.nix` and lists what changes since the last apply, the second runs `nixarchy-apply` with the build log streaming into the panel |
-| `l` | show the build log again (after `Esc`, or after closing and reopening the panel) |
+| `l` | show the build log again (after `Esc`, or after closing and reopening the panel). Scroll up to read back; it stops following the build until you scroll back to the end |
 | `Esc` | one step back; closes from the top. During a build it hides the log and the build carries on |
 
 Nothing is installed until you press `a` twice. Apply builds only what this

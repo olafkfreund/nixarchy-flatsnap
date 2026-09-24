@@ -41,6 +41,32 @@ Item {
 
   FlatsnapModel { id: fs }
 
+  // A line of Line text: the scroll step, so it follows the text size.
+  FontMetrics {
+    id: lineMetrics
+    font.family: Style.font.family
+    font.pixelSize: Style.font.title
+  }
+
+  // Flickable has no key scrolling of its own; this is it, clamped to the content.
+  function scrollBy(view, dy) {
+    view.contentY = Math.max(0, Math.min(view.contentHeight - view.height, view.contentY + dy))
+  }
+  // A page keeps the last line of the old one in sight.
+  function pageOf(view) { return view.height - lineMetrics.lineSpacing }
+  // j k, Up Down, PgUp PgDn: how far they scroll `view`, or 0 for any other key.
+  function scrollKey(k, bare, view) {
+    if (k === Qt.Key_Down || (bare && k === Qt.Key_J)) return lineMetrics.lineSpacing
+    if (k === Qt.Key_Up || (bare && k === Qt.Key_K)) return -lineMetrics.lineSpacing
+    if (k === Qt.Key_PageDown) return root.pageOf(view)
+    if (k === Qt.Key_PageUp) return -root.pageOf(view)
+    return 0
+  }
+  function scrollLog(dy) {
+    root.scrollBy(logView, dy)
+    logView.follow = logView.contentY >= logView.contentHeight - logView.height - 1
+  }
+
   // One line of plain text in the menu's colours. Everything shown here
   // came from a store or a build log, so it is never markup.
   component Line: Text {
@@ -49,6 +75,19 @@ Item {
     font.family: Style.font.family
     font.pixelSize: Style.font.title
     color: Color.menu.text
+  }
+
+  // There is more below the edge: say so, or a warning at the end of
+  // a long card could go unseen. Over the content, on its own background.
+  component MoreMarker: Rectangle {
+    required property Flickable view
+    visible: view.visible && view.contentY < view.contentHeight - view.height - 1
+    anchors { right: view.right; bottom: view.bottom }
+    width: moreText.implicitWidth + Style.space(12)
+    height: moreText.implicitHeight
+    radius: Style.cornerRadius
+    color: Color.menu.background
+    Line { id: moreText; anchors.centerIn: parent; opacity: 0.7; text: "↓ more (j)" }
   }
 
   PanelWindow {
@@ -91,21 +130,29 @@ Item {
           var k = event.key
           var bare = event.modifiers === Qt.NoModifier
           var typing = field.activeFocus || ovField.activeFocus
-          var modifier = k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt || k === Qt.Key_Meta
 
           if (fs.showingLog) {
             // ESC leaves the build running: it is elevating and switching a
             // system, and stopping it half way is never what ESC meant.
             if (k === Qt.Key_Escape) { fs.showingLog = false; root.focusKeys(); event.accepted = true }
+            else {
+              var logDy = root.scrollKey(k, bare, logView)
+              if (logDy !== 0) { root.scrollLog(logDy); event.accepted = true }
+            }
             return
           }
 
-          // A pending confirmation is cancelled by any other real key.
-          var enter = k === Qt.Key_Return || k === Qt.Key_Enter
-          if (!modifier && k !== Qt.Key_Y && k !== Qt.Key_A && k !== Qt.Key_X
-              && !(enter && fs.queueArmed)
-              && (fs.pendingDelete !== "" || fs.applyArmed || fs.classicArmed || fs.queueArmed)) {
-            fs.disarm(); fs.message = ""
+          // A pending confirmation is cancelled by any other real key; the
+          // rule, with its exceptions, is in the model.
+          fs.keyPressed(k, bare, typing)
+
+          // On a card, the move keys scroll it: the list they moved is hidden.
+          // j k are letters, so they scroll only when no field has the
+          // keyboard; the arrows and pages also take it back from a field,
+          // which would otherwise scroll out of sight with the keyboard in it.
+          if (fs.view === "card") {
+            var dy = root.scrollKey(k, bare && !typing, cardView)
+            if (dy !== 0) { root.scrollBy(cardView, dy); if (typing) root.focusKeys(); event.accepted = true; return }
           }
 
           if (event.modifiers & Qt.ControlModifier) {
@@ -180,6 +227,9 @@ Item {
           contentHeight: cardCol.implicitHeight
           clip: true
 
+          // One Flickable for every card: a new app starts at its top.
+          Connections { target: fs; function onCardChanged() { cardView.contentY = 0 } }
+
           Column {
             id: cardCol
             width: cardView.width
@@ -228,6 +278,14 @@ Item {
                 foreground: Color.menu.text
                 text: fs.overrides
                 onTextChanged: fs.overrides = text
+                // p may land here below the edge: scroll just enough to show it.
+                onActiveFocusChanged: {
+                  if (!activeFocus) return
+                  var top = ovField.mapToItem(cardCol, 0, 0).y
+                  var bottom = top + ovField.height
+                  if (bottom > cardView.contentY + cardView.height) cardView.contentY = bottom - cardView.height
+                  else if (top < cardView.contentY) cardView.contentY = top
+                }
               }
             }
 
@@ -253,6 +311,8 @@ Item {
             Line { text: "\nEnter queues it.  Nothing is installed until a applies."; width: parent.width }
           }
         }
+
+        MoreMarker { view: cardView }
 
         // ---- the list: search hits, candidates, or what is declared -----
         ListView {
@@ -305,9 +365,18 @@ Item {
           anchors { top: tabs.bottom; topMargin: Style.space(12); left: parent.left; right: parent.right; bottom: footer.top }
           contentHeight: logText.implicitHeight
           clip: true
-          onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
+          // It follows new lines only while it is at its end: scrolled up to
+          // read back, it stays put until scrolled back down.
+          property bool follow: true
+          function toEnd() { contentY = Math.max(0, contentHeight - height) }
+          onContentHeightChanged: if (follow) toEnd()
+          Connections {
+            target: fs
+            function onShowingLogChanged() { if (fs.showingLog) { logView.follow = true; logView.toEnd() } }
+          }
           Line { id: logText; width: logView.width; text: fs.applyLog.join("\n") }
         }
+        MoreMarker { view: logView }
 
         Column {
           id: footer
@@ -322,8 +391,7 @@ Item {
           Line {
             width: parent.width
             opacity: 0.7
-            text: fs.showingLog ? "Esc stops watching (the build carries on)"
-                : "Enter look up / queue   Ctrl+F Flathub   Ctrl+S Snap   Tab Add/Declared   j k move   c channel   x classic   p overrides   d remove   a apply   l log   Esc back"
+            text: fs.keysHint   // only the keys for this view
           }
         }
       }

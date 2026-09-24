@@ -19,6 +19,28 @@ ShellRoot {
   FlatsnapModel { id: fs }
 
   Component.onCompleted: {
+    // The view that has the keys, and only its keys in the footer (#15).
+    fs.reset()
+    t.ok(fs.view === "add", "reset: add view, got " + fs.view)
+    t.ok(fs.keysHint.indexOf("Ctrl+F") >= 0 && fs.keysHint.indexOf("scroll") < 0, "add hint: " + fs.keysHint)
+    t.ok(fs.keysHint.indexOf("l log") < 0, "no log yet, no l: " + fs.keysHint)
+    fs._showCard({ store: "flatpak", id: "org.a.B", name: "B" })
+    t.ok(fs.view === "card", "a card: card view, got " + fs.view)
+    t.ok(fs.keysHint.indexOf("p overrides") >= 0 && fs.keysHint.indexOf("c channel") < 0
+         && fs.keysHint.indexOf("PgUp PgDn scroll") >= 0, "flatpak card hint: " + fs.keysHint)
+    fs.applyLog = ["x"]
+    t.ok(fs.keysHint.indexOf("l log   Esc back") >= 0, "a log: l before Esc: " + fs.keysHint)
+    fs.showingLog = true
+    t.ok(fs.view === "log", "the log wins over a card, got " + fs.view)
+    t.ok(fs.keysHint.indexOf("Esc stops watching") >= 0 && fs.keysHint.indexOf("l log") < 0, "log hint: " + fs.keysHint)
+    fs.showingLog = false; fs.applyLog = []
+    fs._showCard({ store: "snap", id: "code", name: "code", channels: ["stable"] })
+    t.ok(fs.keysHint.indexOf("c channel") >= 0 && fs.keysHint.indexOf("x classic") >= 0
+         && fs.keysHint.indexOf("p overrides") < 0, "snap card hint: " + fs.keysHint)
+    fs.setTab(1)
+    t.ok(fs.view === "declared" && fs.keysHint.indexOf("d remove") >= 0, "declared: " + fs.view + " / " + fs.keysHint)
+    fs.setTab(0); fs.card = null
+
     // Channels: only what the snap publishes, in risk order.
     fs._showCard({ store: "snap", id: "code", name: "code", channels: ["stable"], confinement: "classic", classic: true })
     fs.cycleChannel()
@@ -78,8 +100,26 @@ ShellRoot {
     fs.queue(); fs.disarm()
     t.ok(!fs.queueArmed, "disarm() clears the override confirmation")
 
+    // Scrolling the card keeps the arm, any other key drops it (#15,
+    // decided by the user): arm -> scroll -> still armed -> Enter queues.
+    fs.queue()
+    fs.keyPressed(Qt.Key_Q, true, false)
+    t.ok(!fs.queueArmed && fs.message === "", "another key disarms")
+    fs.queue()
+    fs.keyPressed(Qt.Key_J, true, true)
+    t.ok(!fs.queueArmed, "j typed into a field is not a scroll: it disarms")
+    fs.queue()
+    var scrolls = [[Qt.Key_J, true], [Qt.Key_K, true], [Qt.Key_Down, false], [Qt.Key_Up, false],
+                   [Qt.Key_PageDown, false], [Qt.Key_PageUp, false]]
+    for (var sk = 0; sk < scrolls.length; sk++) fs.keyPressed(scrolls[sk][0], scrolls[sk][1], false)
+    t.ok(fs.queueArmed && fs.message.indexOf("Enter again") === 0, "scroll keys keep the arm and its message")
+    fs.applyArmed = true
+    fs.keyPressed(Qt.Key_PageDown, false, false)
+    t.ok(fs.applyArmed, "scrolling keeps an armed apply too")
+    fs.applyArmed = false
+
     // Arm, then confirm: now it writes, with the override on argv.
-    fs.queue(); fs.queue()
+    fs.queue()
     t.ok(fs.busy, "second Enter writes")
     t.ok(fs._writer.command.join(" ").indexOf("--override Context.filesystems=xdg-pictures:ro") >= 0,
          "argv carries the override: " + fs._writer.command.join(" "))

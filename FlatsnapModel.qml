@@ -41,6 +41,18 @@ QtObject {
   readonly property var rows: tab === 0 ? results : declared
   readonly property var current: rows.length > 0 ? rows[Math.min(cursor, rows.length - 1)] : null
 
+  // Which view has the keys, and the footer's keys for it: only what does
+  // something there, so the line stays short in a small window.
+  readonly property string view: showingLog ? "log" : tab === 1 ? "declared" : card ? "card" : "add"
+  readonly property string keysHint: {
+    if (view === "log") return "j k PgUp PgDn scroll   Esc stops watching (the build carries on)"
+    var s = view === "declared" ? "j k move   d remove   a apply   Tab Add"
+          : view === "add" ? "Enter look up / open   Ctrl+F Flathub   Ctrl+S Snap   j k move   Tab Declared   a apply"
+          : card.store === "snap" ? "j k PgUp PgDn scroll   c channel   x classic   Enter queue   a apply"
+          : "j k PgUp PgDn scroll   p overrides   Enter queue   a apply"
+    return s + (applyLog.length > 0 ? "   l log" : "") + "   Esc back"
+  }
+
   // Reopening during a build opens on its log: the build is still running.
   function reset() {
     tab = 0; results = []; card = null; cursor = 0; message = ""
@@ -295,6 +307,21 @@ QtObject {
     _run(_preflight, ["preflight"])
     message = "checking…"   // after _run, which clears it
   }
+
+  // A pending confirmation is cancelled by any real key except the ones
+  // that confirm it (y a x, Enter on an armed queue) and, on a card, the
+  // keys that only scroll it: reading the card before confirming must not
+  // cancel (decided by the user, #15). Typed into a field, j k are text.
+  function cancelsConfirm(k, bare, typing) {
+    if (!(pendingDelete !== "" || applyArmed || classicArmed || queueArmed)) return false
+    if (k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt || k === Qt.Key_Meta) return false
+    if (k === Qt.Key_Y || k === Qt.Key_A || k === Qt.Key_X) return false
+    if ((k === Qt.Key_Return || k === Qt.Key_Enter) && queueArmed) return false
+    if (view === "card" && (k === Qt.Key_Down || k === Qt.Key_Up || k === Qt.Key_PageDown || k === Qt.Key_PageUp
+                            || (bare && !typing && (k === Qt.Key_J || k === Qt.Key_K)))) return false
+    return true
+  }
+  function keyPressed(k, bare, typing) { if (cancelsConfirm(k, bare, typing)) { disarm(); message = "" } }
 
   function disarm() { applyArmed = false; classicArmed = false; queueArmed = false; pendingDelete = "" }
 
