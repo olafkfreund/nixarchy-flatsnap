@@ -326,6 +326,10 @@ printf "\033[1mbuilding\033[0m\\n50%%\\r100%%\\n"; exit ${APPLY_RC:-0}'
 stub flatpak 'printf "org.gnome.Calculator\\ncom.byhand.App\\n"'
 stub nix 'echo "$3" >"$NIX_LOG"; echo "$NIX_EVAL_ANSWER"'
 stub sudo 'exit ${SUDO_RC:-1}'
+# The unit apply starts: never the real systemd tools (tests/isolate.sh).
+stub systemd-run 'exit 1'
+stub systemctl 'exit 0'
+stub journalctl 'exit 0'
 export NIX_LOG="$work/nix.log" ELEV_LOG="$work/elev.log" APPLY_LOG="$work/apply.log" COPIED="$work/copied.nix"
 # Hermetic: a developer's own shell may export these (nixarchy sets
 # NIXARCHY_FLAKE), and they would silently decide the tests below.
@@ -337,8 +341,8 @@ export XDG_CONFIG_HOME="$work/config"; unset NIXARCHY_FLATSNAP_FILE
 # shellcheck source=tests/isolate.sh disable=SC1091
 . "$here/isolate.sh"
 P=$(isolated_path "$ab" "$work/tools" bash jq nix-instantiate awk sed grep sha256sum cut \
-  mktemp cat cp mv rm mkdir dirname uname tr head flock sort) || { echo "ABORT: could not build the test PATH" >&2; exit 1; }
-assert_isolated "$P" "$ab/nixarchy-apply"
+  mktemp cat cp mv rm mkdir dirname uname tr head flock sort readlink) || { echo "ABORT: could not build the test PATH" >&2; exit 1; }
+assert_isolated "$P" "$ab"
 pa() { env PATH="$P" bash "$cli" "$@"; }
 
 export NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":false,"declared":["org.gnome.Calculator"]}'

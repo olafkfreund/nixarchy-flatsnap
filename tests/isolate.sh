@@ -18,15 +18,19 @@ isolated_path() {
   printf '%s:%s' "$stubs" "$tools"
 }
 
-# assert_isolated <PATH> <stub nixarchy-apply> : exits the calling test file,
-# not just the case, unless nixarchy-apply is the stub, no PATH directory is
-# a system one, and every link in them points into /nix/store directly.
+# assert_isolated <PATH> <stubs dir> : exits the calling test file, not just
+# the case, unless nixarchy-apply and the systemd tools apply starts a unit
+# with are the stubs in <stubs dir>, no PATH directory is a system one, and
+# every link in them points into /nix/store directly. A real systemd-run
+# would start a real nixarchy-rebuild unit on the machine running the tests.
 # /usr/bin and /bin count as system: with envfs, /usr/bin/<anything> exists
 # and runs whatever the caller's PATH would -- the real nixarchy-apply too.
 assert_isolated() {
-  local path=$1 want=$2 got dir f p
-  got=$(PATH=$path; command -v nixarchy-apply) || got=""
-  [ "$got" = "$want" ] || { echo "ABORT: nixarchy-apply is '$got' on the test PATH, not the stub $want" >&2; exit 1; }
+  local path=$1 stubs=$2 got dir f p t
+  for t in nixarchy-apply systemd-run systemctl journalctl; do
+    got=$(PATH=$path; command -v "$t") || got=""
+    [ "$got" = "$stubs/$t" ] || { echo "ABORT: $t is '$got' on the test PATH, not the stub $stubs/$t" >&2; exit 1; }
+  done
   local IFS=:
   for dir in $path; do
     for p in "$dir" "$(readlink -f "$dir")"; do
