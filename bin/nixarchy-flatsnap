@@ -47,6 +47,9 @@ FH_VERIFY_JQ='def fhverified($p):
   elif .[$p + "verified"] == true then {verified: true, verifiedAs: (.[$p + "website"]
     // (if .[$p + "login_name"] then "\(.[$p + "login_name"]) (\(.[$p + "login_provider"] // "unknown"))" else "" end))}
   else {verified: false, verifiedAs: ""} end;'
+# Snap Store publisher.validation: only "verified" is; "unproven" and
+# "starred" (a Canonical nod, not an identity check) are not; absent is null.
+SNAP_VERIFY_JQ='def snapverified: if type != "object" or .validation == null then null else .validation == "verified" end;'
 
 die() { jq -cn --arg e "$1" '{error: $e}'; exit 2; }
 
@@ -160,7 +163,7 @@ lookup_snap() {
   local j out
   j=$(snap_api "snap-info-$1.json" "info/$1?fields=title,summary,publisher,license,confinement") || return 1
   out=$(jq -cn --arg id "$1" --arg ch "$channel" --argjson given "$channel_given" \
-    --argjson classic "$classic" --argjson j "$j" '
+    --argjson classic "$classic" --argjson j "$j" "$SNAP_VERIFY_JQ"'
     # The default track, not always latest: snap installs a bare risk from
     # it (node: --channel=stable is 24/stable), so that is what to describe.
     ($j."default-track" // "latest") as $track
@@ -180,6 +183,7 @@ lookup_snap() {
         store: "snap", id: $id,
         name: ($j.snap.title // $id), summary: ($j.snap.summary // ""),
         publisher: ($j.snap.publisher."display-name" // ""),
+        verified: ($j.snap.publisher | snapverified), verifiedAs: "",
         license: ($j.snap.license // ""),
         confinement: $conf,
         channels: ([$m[].channel.risk] | unique),
@@ -231,15 +235,16 @@ search_flathub() {
   body=$(jq -cn --arg q "$1" '{query: $q}')
   fetch "${2:-flathub-search.json}" https://flathub.org/api/v2/search \
     -X POST -H 'Content-Type: application/json' --data-binary "$body" |
-    jq -c '[.hits[:20][] | {store: "flatpak", id: .app_id, name, summary}]'
+    jq -c "$FH_VERIFY_JQ"'[.hits[:20][] | {store: "flatpak", id: .app_id, name, summary} + fhverified("verification_")]'
 }
 
 search_snap() {
   local q
   q=$(jq -rn --arg q "$1" '$q | @uri')
   snap_api snap-find.json "find?q=$q&fields=title,summary,publisher" |
-    jq -c '[.results[:20][] | {store: "snap", id: .name, name: (.snap.title // .name),
-            summary: (.snap.summary // ""), publisher: (.snap.publisher."display-name" // "")}]'
+    jq -c "$SNAP_VERIFY_JQ"'[.results[:20][] | {store: "snap", id: .name, name: (.snap.title // .name),
+            summary: (.snap.summary // ""), publisher: (.snap.publisher."display-name" // ""),
+            verified: (.snap.publisher | snapverified), verifiedAs: ""}]'
 }
 
 cmd_search() {
