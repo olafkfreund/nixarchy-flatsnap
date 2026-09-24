@@ -48,6 +48,7 @@ Flatpak or Snap ID grammar.
 | *(paste)* then `Enter` | look it up |
 | `Ctrl+F` / `Ctrl+S` | search Flathub / the Snap Store for what is in the field |
 | `j` `k` / `↓` `↑` | move |
+| `/` | put the cursor back in the field |
 | `Enter` | on a result: open it; on a card: queue it |
 | `c` | cycle through the channels this Snap publishes: stable → candidate → beta → edge |
 | `x` `x` | switch a Snap to classic confinement (two presses: it removes the sandbox) |
