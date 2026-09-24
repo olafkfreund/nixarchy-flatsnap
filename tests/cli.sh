@@ -56,6 +56,15 @@ expect 'snap install code'                                      '.confinements =
 expect 'https://snapcraft.io/hello-world'                       '(.confinements | keys) == (.channels) and ([.confinements[]] | unique) == ["strict"]'
 expect '  org.gnome.Calculator  '                               '.store=="flatpak"'
 expect 'hello-world'                                            '.store=="snap" and .id=="hello-world"'
+# No channel named: offer the first one the snap publishes, and its
+# confinement (fixture: beta strict, edge classic, no stable) (#13 C5).
+expect 'https://snapcraft.io/no-stable'                         '.channel=="beta" and .confinement=="strict" and .classic==false'
+expect 'snap install no-stable --edge'                          '.channel=="edge" and .classic==true'
+expect 'snap install hello-world --channel=beta'                '.channel=="beta"'
+# A channel named but not published is refused up front, not at apply.
+out=$(bash "$cli" resolve 'snap install no-stable --channel=stable'); rc=$?
+[ $rc -eq 2 ] && jq -e '.error | test("does not publish stable") and test("beta") and test("edge")' <<<"$out" >/dev/null && ok ||
+  bad "unpublished channel accepted (rc=$rc): $out"
 
 # ---- hostile and out-of-scope input: refused, never looked up -----------
 # The single quotes are the point: these must reach the CLI unexpanded.

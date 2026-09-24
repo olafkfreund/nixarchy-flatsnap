@@ -1,0 +1,29 @@
+{
+  "name": "no-stable",
+  "snap": {
+    "title": "No Stable",
+    "summary": "The 'hello-world' of snaps",
+    "license": "MIT",
+    "publisher": {
+      "display-name": "Canonical"
+    }
+  },
+  "channel-map": [
+    {
+      "channel": {
+        "name": "beta",
+        "risk": "beta",
+        "track": "latest"
+      },
+      "confinement": "strict"
+    },
+    {
+      "channel": {
+        "name": "edge",
+        "risk": "edge",
+        "track": "latest"
+      },
+      "confinement": "classic"
+    }
+  ]
+}

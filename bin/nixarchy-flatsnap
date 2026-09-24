@@ -33,7 +33,8 @@ snap_api() { fetch "$1" "https://api.snapcraft.io/v2/snaps/$2" -H 'Snap-Device-S
 
 # ---- classify: pasted text -> store, id, channel, classic ---------------
 
-store="" id="" channel="stable" classic=false
+# channel_given: the person named a channel, so it is not ours to change.
+store="" id="" channel="stable" channel_given=false classic=false
 
 classify() {
   local text=$1
@@ -81,9 +82,9 @@ parse_install() {
       --user) die "per-user Flatpaks are not supported; this installs system-wide" ;;
       --classic) [ "$tool" = snap ] || die "unknown flag ${w[i]}"; classic=true ;;
       --stable|--candidate|--beta|--edge)
-        [ "$tool" = snap ] || die "unknown flag ${w[i]}"; channel=${w[i]#--} ;;
-      --channel=*) channel=${w[i]#--channel=} ;;
-      --channel) i=$((i + 1)); channel=${w[i]:-} ;;
+        [ "$tool" = snap ] || die "unknown flag ${w[i]}"; channel=${w[i]#--} channel_given=true ;;
+      --channel=*) channel=${w[i]#--channel=} channel_given=true ;;
+      --channel) i=$((i + 1)); channel=${w[i]:-} channel_given=true ;;
       -*) die "unknown flag ${w[i]}" ;;
       *) names+=("${w[i]}") ;;
     esac
@@ -118,11 +119,21 @@ lookup_flatpak() {
 }
 
 lookup_snap() {
-  local j
+  local j out
   j=$(snap_api "snap-info-$1.json" "info/$1?fields=title,summary,publisher,license,confinement") || return 1
-  jq -cn --arg id "$1" --arg ch "$channel" --argjson classic "$classic" --argjson j "$j" '
+  out=$(jq -cn --arg id "$1" --arg ch "$channel" --argjson given "$channel_given" \
+    --argjson classic "$classic" --argjson j "$j" '
     [$j."channel-map"[] | select(.channel.track == "latest")] as $m
-    | ([$m[] | select(.channel.risk == $ch) | .confinement][0]
+    | ([$m[].channel.risk] | unique) as $have
+    # No channel named: the first one the snap publishes, in risk order, so
+    # the card never offers one that would fail at apply. Nothing published
+    # on latest: keep the default.
+    | (if $given or ($have | length) == 0 then $ch
+       else first(("stable", "candidate", "beta", "edge") | select(. as $r | $have | index($r) != null)) end) as $sel
+    | if $given and ($have | length) > 0 and ($have | index($sel)) == null then
+        {error: "\($id) does not publish \($sel); it has: \($have | join(", "))"}
+      else
+    ([$m[] | select(.channel.risk == $sel) | .confinement][0]
        // [$m[] | .confinement][0] // "strict") as $conf
     | {
         store: "snap", id: $id,
@@ -134,10 +145,12 @@ lookup_snap() {
         # Per channel: a snap can be strict on one and classic on another,
         # so the panel re-reads this when the channel changes.
         confinements: ([$m[] | {key: .channel.risk, value: .confinement}] | from_entries),
-        channel: $ch,
+        channel: $sel,
         # A classic snap cannot install without --classic, so the store decides.
         classic: ($classic or $conf == "classic")
-      }'
+      } end')
+  if jq -e 'has("error")' <<<"$out" >/dev/null; then die "$(jq -r .error <<<"$out")"; fi
+  printf '%s\n' "$out"
 }
 
 cmd_resolve() {
