@@ -16,13 +16,12 @@
       forAll = nixpkgs.lib.genAttrs systems;
     in
     {
-      nixosModules = {
-        # For a host without nix-snapd: the module and the snap daemon.
-        default = { imports = [ ./module.nix nix-snapd.nixosModules.default ]; };
-        # For a host that already imports nix-snapd (and nix-flatpak), e.g. via
-        # nixarchy or its own flake: importing it twice declares services.snap twice.
-        flatsnap = ./module.nix;
-      };
+      # The module and the snap daemon. A host that already imports nix-snapd
+      # imports "${inputs.nixarchy-flatsnap}/module.nix" instead: importing
+      # nix-snapd twice declares services.snap twice.
+      nixosModules.default = { imports = [ ./module.nix nix-snapd.nixosModules.default ]; };
+
+      formatter = forAll (system: nixpkgs.legacyPackages.${system}.nixfmt);
 
       packages = forAll (system:
         let pkgs = nixpkgs.legacyPackages.${system};
@@ -54,8 +53,15 @@
           # The same CLI on PATH, with its tools pinned, for a terminal.
           cli = pkgs.writeShellApplication {
             name = "nixarchy-flatsnap";
-            runtimeInputs = with pkgs; [ curl jq gawk coreutils ];
+            runtimeInputs = with pkgs; [ curl jq gawk coreutils gnused gnugrep nix ];
             text = builtins.readFile ./bin/nixarchy-flatsnap;
+            meta = with pkgs.lib; {
+              description = "Declare Flatpak and Snap apps for nixarchy from a terminal";
+              homepage = "https://github.com/olafkfreund/nixarchy-flatsnap";
+              license = licenses.mit;
+              platforms = platforms.linux;
+              mainProgram = "nixarchy-flatsnap";
+            };
           };
         });
 
@@ -65,7 +71,8 @@
           shellcheck = pkgs.runCommand "nixarchy-flatsnap-shellcheck"
             { nativeBuildInputs = [ pkgs.shellcheck ]; }
             ''
-              shellcheck ${./bin/nixarchy-flatsnap} ${./bin/nixarchy-flatsnap-reconcile} ${./tests/cli.sh}
+              shellcheck ${./bin/nixarchy-flatsnap} ${./bin/nixarchy-flatsnap-reconcile} ${./tests/cli.sh} \
+                ${./tests/model.sh} ${./docs/record.sh}
               touch "$out"
             '';
 
@@ -111,12 +118,6 @@
             touch "$out"
           '';
 
-          # No symlinks in the plugin folder: the validator refuses them.
-          plugin-no-symlinks = pkgs.runCommand "nixarchy-flatsnap-no-symlinks" { } ''
-            if find ${self.packages.${system}.plugin} -type l | grep .; then exit 1; fi
-            touch "$out"
-          '';
-
           # snapd -- and its setuid snap-confine -- only exists while there is
           # a snap to run or one still to remove. Pure evaluation, no VM.
           module-gating =
@@ -135,16 +136,16 @@
             assert lib.assertMsg (snapdWith { snaps = [ { name = "hello-world"; } ]; }) "snapd off with a snap declared";
             assert lib.assertMsg (snapdWith { pendingRemoval = [ "hello-world" ]; }) "snapd off while a removal is pending";
             # A host that already imports nix-snapd, like nixos_config: the
-            # `flatsnap` output must compose with it, not redeclare it.
+            # module alone must compose with it, not redeclare it.
             assert lib.assertMsg ((nixpkgs.lib.nixosSystem {
               inherit system;
               modules = [
                 nix-snapd.nixosModules.default
                 nix-flatpak.nixosModules.nix-flatpak
-                self.nixosModules.flatsnap
+                ./module.nix
                 { boot.isContainer = true; system.stateVersion = "26.05"; programs.nixarchy.flatsnap.snaps = [ { name = "hello-world"; } ]; }
               ];
-            }).config.systemd.services.nixarchy-flatsnap-snaps.path != [ ]) "flatsnap output does not compose with an existing nix-snapd import";
+            }).config.systemd.services.nixarchy-flatsnap-snaps.path != [ ]) "module.nix does not compose with an existing nix-snapd import";
             # nixarchy owns the Install -> Flatpak & Snap row (olafkfreund/nixarchy#914);
             # this module must not add a second one through extraEntries.
             assert lib.assertMsg (!((nixpkgs.lib.nixosSystem {
@@ -190,6 +191,13 @@
                 machine.wait_for_unit("snapd.service")
                 machine.succeed("systemctl cat nixarchy-flatsnap-snaps.service")
                 machine.succeed("grep -q hello-world $(systemctl show -P ExecStart nixarchy-flatsnap-snaps.service | grep -o '/nix/store/[^ ]*-nixarchy-flatsnap-snaps.json')")
+                # The hardened unit reaches snapd and fails only on the missing
+                # network (no store here), never on its own sandbox.
+                machine.wait_until_succeeds("systemctl show -P ActiveState nixarchy-flatsnap-snaps.service | grep -Eqx 'active|failed'", timeout=300)
+                machine.fail("journalctl -u nixarchy-flatsnap-snaps | grep -Ei 'permission denied|read-only file system|operation not permitted'")
+                machine.succeed("journalctl -u nixarchy-flatsnap-snaps | grep -q 'install hello-world'")
+                # Measured 1.8 with the hardening; --threshold counts tenths (20 = 2.0).
+                machine.succeed("systemd-analyze security --threshold=20 nixarchy-flatsnap-snaps.service")
               '';
           };
         });

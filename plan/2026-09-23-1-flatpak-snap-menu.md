@@ -231,3 +231,35 @@ These all pass with no warnings. The VM test takes about 3 minutes.
   - `nixos-rebuild switch --rollback` restores which apps were declared, not their versions.
 - **nixarchy PR:** revert it. With no `flatsnap.nix` present, the loop change
   is a no-op, so reverting only removes the menu row.
+
+## Late deviations (2026-09-24, #11)
+
+Found by the 2026-09-24 review and recorded here without changing the approved
+text above. Each one is what shipped, not what the plan said.
+
+- **The menu row (step 9, above).** The module's `install.flatsnap` row
+  through `extraEntries` was removed again by #3/#4 (PR #4).
+  olafkfreund/nixarchy#914 owns the Install → Flatpak & Snap row, and the
+  `module-gating` check asserts that the module adds none.
+- **The nixarchy PR number.** "The nixarchy PR (#904)" above names the issue.
+  The PR is olafkfreund/nixarchy#906 ("nixarchy-apply copies flatsnap.nix too
+  (#904)").
+- **Two module outputs.** The flake shipped `nixosModules.default` (the module
+  plus nix-snapd) and `nixosModules.flatsnap` (the module alone, for a host
+  that already imports nix-snapd). #11 drops `flatsnap`, because nothing
+  consumed it. Such a host imports `module.nix` by path.
+- **No `restartTriggers`.** The unit's `ExecStart` names the plan's store path,
+  so a changed list is a changed unit, and `switch-to-configuration` restarts
+  it.
+- **A `preflight` verb, and how apply elevates.** Apply's pre-check became its
+  own verb, `nixarchy-flatsnap preflight`. The panel shows it before applying:
+  module present, and what `uninstallUnmanaged` would remove. Apply uses
+  `pkexec`, or nh's `passwordless` when `sudo -n true` succeeds, and an
+  explicit `NH_ELEVATION_STRATEGY` wins (PR #7). The flake path it evaluates is
+  the one `nixarchy-apply` falls back to, not a hardcoded `/etc/nixos` (PR #7).
+- **The `/` key** puts the cursor back in the field (`Menu.qml`). It was missing
+  from the key list above and from the README until #11.
+- **Queuing with overrides takes a second `Enter`.** The first shows what the
+  overrides will change ("Enter again: change <id>'s sandbox with …").
+- **Docs link out.** The Pages site links to the README's Install and Keys
+  sections instead of repeating them.
