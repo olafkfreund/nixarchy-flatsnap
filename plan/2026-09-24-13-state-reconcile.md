@@ -8,7 +8,7 @@ spec: spec/2026-09-24-13-state-reconcile.md
 
 ## Approved decisions (self-contained)
 
-Line numbers are for `main` at 64f97b2. They move after the rebase in step 2.
+Line numbers are for `main` at 337dcf3 (after #11; updated in step 2).
 
 **Decided at intent approval**
 
@@ -43,7 +43,7 @@ Line numbers are for `main` at 64f97b2. They move after the rebase in step 2.
   to the `nativeBuildInputs` of `checks.cli`.
 - **D2 (C4).** In `write_state`, delete the `cp … "$f.bak"` (`:273`) and the
   restore (`:278`). The comment becomes "Write aside, parse-check, rename".
-  `docs/record.sh:170` stops naming `$FS_FILE.bak`. Plan #1 gets this dated
+  `docs/record.sh:206` stops naming `$FS_FILE.bak`. Plan #1 gets this dated
   line under its state-file bullet (`:18`): *"2026-09-24 (#13): the
   backup/restore step was removed; mktemp → parse → mv gives the same
   guarantee. See spec/2026-09-24-13-state-reconcile.md D2."*
@@ -55,7 +55,7 @@ Line numbers are for `main` at 64f97b2. They move after the rebase in step 2.
   Its three callers:
   - `write_state` prunes `pendingRemoval` only on an array.
   - `installed` uses `installed_ids x || echo null`.
-  - `cmd_preflight:404-407` dies on a failure ("could not list installed
+  - `cmd_preflight:403-406` dies on a failure ("could not list installed
     Flatpaks, so preflight cannot say what apply would remove"), and turns
     `null` into `[]`.
 - **D4 (C2).**
@@ -104,7 +104,7 @@ Line numbers are for `main` at 64f97b2. They move after the rebase in step 2.
 - **Scope boundary.** This change stays in `load_state`, `write_state`,
   `cmd_add`, `cmd_rm`, the installed-list helpers, `lookup_snap`, `nixstr`,
   `classify`/`parse_install` and the reconciler. The only overlap is
-  `cmd_preflight:404-407`, which #11 also touches.
+  `cmd_preflight:403-406`, which #11 also touches.
 
 ## Steps
 
@@ -164,7 +164,7 @@ A deviation updates this file in the same commit as the code.
    existing add/rm tests do not hang, which proves there is no deadlock.
 4. **`bin/nixarchy-flatsnap`, `docs/record.sh`, plan #1: no `.bak` (D2).**
    Delete the two lines, update the comment, drop `$FS_FILE.bak` from
-   `record.sh:170`, and add the dated note to plan #1. In `tests/cli.sh`, add
+   `record.sh:206`, and add the dated note to plan #1. In `tests/cli.sh`, add
    the stale-`.bak` test: a `$f.bak` exists, `$f` is deleted, and the parse is
    stubbed to fail. `add` must exit 2, `$f` must still not exist, and no
    `.bak` must be created by any test.
