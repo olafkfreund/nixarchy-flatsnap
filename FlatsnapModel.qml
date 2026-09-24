@@ -41,6 +41,18 @@ QtObject {
   readonly property var rows: tab === 0 ? results : declared
   readonly property var current: rows.length > 0 ? rows[Math.min(cursor, rows.length - 1)] : null
 
+  // Which view has the keys, and the footer's keys for it: only what does
+  // something there, so the line stays short in a small window.
+  readonly property string view: showingLog ? "log" : tab === 1 ? "declared" : card ? "card" : "add"
+  readonly property string keysHint: {
+    if (view === "log") return "j k PgUp PgDn scroll   Esc stops watching (the build carries on)"
+    var s = view === "declared" ? "j k move   d remove   a apply   Tab Add"
+          : view === "add" ? "Enter look up / open   Ctrl+F Flathub   Ctrl+S Snap   j k move   Tab Declared   a apply"
+          : card.store === "snap" ? "j k PgUp PgDn scroll   c channel   x classic   Enter queue   a apply"
+          : "j k PgUp PgDn scroll   p overrides   Enter queue   a apply"
+    return s + (applyLog.length > 0 ? "   l log" : "") + "   Esc back"
+  }
+
   // Reopening during a build opens on its log: the build is still running.
   function reset() {
     tab = 0; results = []; card = null; cursor = 0; message = ""
