@@ -149,11 +149,16 @@ number in its body.
      top and bottom via `ovField.mapToItem(cardCol, 0, 0).y`. Set
      `contentY` to `bottom - cardView.height` if the row is below the
      view, or to `top` if above.
-   - A `Line` anchored to `cardView`'s bottom-right, `text: "↓ more (j)"`,
-     `opacity: 0.7`. It is visible while
-     `cardView.visible && cardView.contentY < cardView.contentHeight - cardView.height - 1`.
-     The same marker goes on `logView`, visible while `!logView.follow`
-     and the log is not at its end.
+   - A `MoreMarker` inline component at the file's root: a `Line`
+     reading "↓ more (j)" at `opacity: 0.7`, on a `Color.menu.background`
+     `Rectangle` so it stays readable over the text. It is anchored to its
+     view's bottom-right, and visible while
+     `view.visible && view.contentY < view.contentHeight - view.height - 1`.
+     There is one for `cardView` and one for `logView`.
+     *(Deviation: the draft had a bare `Line`, which is hard to read over
+     the text. The log marker also drops the `!follow` term, because
+     `follow` is only true at the end, so "not at the end" says the same
+     thing.)*
 
    → Verify by the QML load (step 11) and razer (step 12).
 

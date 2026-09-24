@@ -74,6 +74,19 @@ Item {
     color: Color.menu.text
   }
 
+  // There is more below the edge: say so, or a warning at the end of
+  // a long card could go unseen. Over the content, on its own background.
+  component MoreMarker: Rectangle {
+    required property Flickable view
+    visible: view.visible && view.contentY < view.contentHeight - view.height - 1
+    anchors { right: view.right; bottom: view.bottom }
+    width: moreText.implicitWidth + Style.space(12)
+    height: moreText.implicitHeight
+    radius: Style.cornerRadius
+    color: Color.menu.background
+    Line { id: moreText; anchors.centerIn: parent; opacity: 0.7; text: "↓ more (j)" }
+  }
+
   PanelWindow {
     id: panel
     visible: root.opened
@@ -216,6 +229,9 @@ Item {
           contentHeight: cardCol.implicitHeight
           clip: true
 
+          // One Flickable for every card: a new app starts at its top.
+          Connections { target: fs; function onCardChanged() { cardView.contentY = 0 } }
+
           Column {
             id: cardCol
             width: cardView.width
@@ -264,6 +280,14 @@ Item {
                 foreground: Color.menu.text
                 text: fs.overrides
                 onTextChanged: fs.overrides = text
+                // p may land here below the edge: scroll just enough to show it.
+                onActiveFocusChanged: {
+                  if (!activeFocus) return
+                  var top = ovField.mapToItem(cardCol, 0, 0).y
+                  var bottom = top + ovField.height
+                  if (bottom > cardView.contentY + cardView.height) cardView.contentY = bottom - cardView.height
+                  else if (top < cardView.contentY) cardView.contentY = top
+                }
               }
             }
 
@@ -289,6 +313,8 @@ Item {
             Line { text: "\nEnter queues it.  Nothing is installed until a applies."; width: parent.width }
           }
         }
+
+        MoreMarker { view: cardView }
 
         // ---- the list: search hits, candidates, or what is declared -----
         ListView {
@@ -344,6 +370,7 @@ Item {
           onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
           Line { id: logText; width: logView.width; text: fs.applyLog.join("\n") }
         }
+        MoreMarker { view: logView }
 
         Column {
           id: footer
