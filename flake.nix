@@ -72,7 +72,7 @@
             { nativeBuildInputs = [ pkgs.shellcheck ]; }
             ''
               shellcheck ${./bin/nixarchy-flatsnap} ${./bin/nixarchy-flatsnap-reconcile} ${./tests/cli.sh} \
-                ${./tests/model.sh} ${./docs/record.sh}
+                ${./tests/model.sh} ${./tests/isolate.sh} ${./docs/record.sh}
               touch "$out"
             '';
 

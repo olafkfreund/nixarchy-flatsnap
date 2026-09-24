@@ -291,18 +291,30 @@ check "strict add of an installed strict snap" 'map(.id) | index("hello-world") 
 # ---- preflight / apply, with nix, nixarchy-apply and flatpak stubbed ------
 ab="$work/applybin"; mkdir -p "$ab"
 stub() { printf '#!/bin/sh\n%s\n' "$2" >"$ab/$1"; chmod +x "$ab/$1"; }
+# Like the real one: copies flatsnap.nix from where it reads it (line 117).
 stub nixarchy-apply '# copies apps services advanced flatsnap
 flake="${NIXARCHY_FLAKE:-/srv/their-flake}"
+echo invoked >>"$APPLY_LOG"
+f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
 echo "elevation=$NH_ELEVATION_STRATEGY" >"$ELEV_LOG"
 printf "\033[1mbuilding\033[0m\\n50%%\\r100%%\\n"; exit ${APPLY_RC:-0}'
 stub flatpak 'printf "org.gnome.Calculator\\ncom.byhand.App\\n"'
 stub nix 'echo "$3" >"$NIX_LOG"; echo "$NIX_EVAL_ANSWER"'
 stub sudo 'exit ${SUDO_RC:-1}'
-export NIX_LOG="$work/nix.log" ELEV_LOG="$work/elev.log"
+export NIX_LOG="$work/nix.log" ELEV_LOG="$work/elev.log" APPLY_LOG="$work/apply.log" COPIED="$work/copied.nix"
 # Hermetic: a developer's own shell may export these (nixarchy sets
 # NIXARCHY_FLAKE), and they would silently decide the tests below.
 unset NIXARCHY_FLAKE NH_ELEVATION_STRATEGY
-pa() { env PATH="$ab:$PATH" bash "$cli" "$@"; }
+# The file nixarchy-apply copies, with no override: the CLI and the stub agree.
+export XDG_CONFIG_HOME="$work/config"; unset NIXARCHY_FLATSNAP_FILE
+# Nothing below may reach the real nixarchy-apply: only the stubs and these
+# tools are on PATH, and the file stops here if that is not so.
+# shellcheck source=tests/isolate.sh disable=SC1091
+. "$here/isolate.sh"
+P=$(isolated_path "$ab" "$work/tools" bash jq nix-instantiate awk sed grep sha256sum cut \
+  mktemp cat cp mv rm mkdir dirname uname tr head flock sort) || { echo "ABORT: could not build the test PATH" >&2; exit 1; }
+assert_isolated "$P" "$ab/nixarchy-apply"
+pa() { env PATH="$P" bash "$cli" "$@"; }
 
 export NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":false,"declared":["org.gnome.Calculator"]}'
 check "preflight ready" '.ok and .willRemove == []' pa preflight

@@ -135,6 +135,29 @@ numbers are only a guide.
    tools PATH in a scratch copy of the test: the file aborts before any apply
    case runs. Do not commit that copy.
 
+   *As implemented:*
+   - **Shared helper.** The PATH builder and the guard are
+     `tests/isolate.sh` (`isolated_path`, `assert_isolated`). `tests/cli.sh`
+     sources it now, and `tests/model.sh` does in step 2. It is added to
+     `checks.shellcheck`. The tools list also has `cut flock sort`: #13's lock
+     needs `flock`.
+   - **Stricter than planned.** The guard denies more than `/run/current-system`,
+     `/run/wrappers` and `/etc/profiles`: any PATH directory under `/run`,
+     `/etc`, `/usr`, `/bin`, `/sbin`, `/nix/var` or a nix profile. Every link
+     in a PATH directory must point into `/nix/store`, both directly and when
+     resolved. Found while checking: with envfs, `/usr/bin/nixarchy-apply`
+     "exists" on NixOS even though `/usr/bin` lists empty, so a PATH of just
+     `/usr/bin` would still reach the real rebuild.
+   - **How the guard was checked.** The scratch-copy check was done as a unit
+     check of `assert_isolated`, which runs only `command -v` and `readlink`,
+     so nothing real can run even if the guard were wrong. These PATHs abort:
+     - `/run/current-system/sw/bin` alone, and after the stub;
+     - `/run/wrappers/bin`;
+     - a directory with a link to `/run/current-system/sw/bin/jq`;
+     - `/usr/bin`.
+
+     The built PATH passes. `checks.cli`: 110 passed, 0 failed.
+
 2. **`tests/model.sh`: the same isolation.** Before quickshell starts:
    - Resolve `quickshell` to its store path.
    - Create `$d/stubs`:
