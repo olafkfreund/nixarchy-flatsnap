@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 15
 intent: intent/2026-09-24-15-card-overflow.md
 ---
