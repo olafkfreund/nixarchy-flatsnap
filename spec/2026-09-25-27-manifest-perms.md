@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 27
 intent: intent/2026-09-25-27-manifest-perms.md
 ---
