@@ -39,7 +39,8 @@ Item {
   function toggle() { if (root.opened) root.close(); else root.open("{}") }
   function focusKeys() { field.focus = false; ovField.focus = false; keys.forceActiveFocus() }
 
-  FlatsnapModel { id: fs }
+  // `typing`: the footer offers no letter key while a field would take it.
+  FlatsnapModel { id: fs; typing: field.activeFocus || ovField.activeFocus }
   // A build found by the status query on open arrives after open() has
   // placed the keyboard: move it to Esc/l then.
   Connections {
