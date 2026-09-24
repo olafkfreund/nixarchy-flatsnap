@@ -125,6 +125,14 @@ for a in 'flatpak org.x.${y}' 'snap Bad_Name' 'snap ok --channel latest/stable' 
   out=$(run add $a); [ $? -eq 2 ] && ok || bad "add $a accepted: $out"
 done
 
+# Concurrent writers: every add that exits 0 is in the file (#13 C1).
+rm -f "$NIXARCHY_FLATSNAP_FILE"
+for i in $(seq 1 20); do run add flatpak "org.test.App$i" >/dev/null 2>&1 & done
+rcs=0; for j in $(jobs -p); do wait "$j" || rcs=$((rcs + 1)); done
+check "20 concurrent adds, 20 entries" 'length == 20' run list
+[ "$rcs" -eq 0 ] && ok || bad "$rcs concurrent adds failed"
+rm -f "$NIXARCHY_FLATSNAP_FILE"
+
 # A hand edit that keeps the shape survives the next write.
 run add snap hello-world >/dev/null
 sed -i 's|    flatpaks = \[|    flatpaks = [\n      { appId = "org.hand.Edited"; }|' "$NIXARCHY_FLATSNAP_FILE"

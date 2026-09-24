@@ -210,7 +210,21 @@ file() { printf '%s' "${NIXARCHY_FLATSNAP_FILE:-${XDG_CONFIG_HOME:-$HOME/.config
 # inside a command substitution only leaves the subshell, and its error
 # JSON would then be read as state and written over the user's file.
 STATE=
+# One writer at a time: add/rm read, change and write the whole state, so two
+# at once would lose one's entry. Taken here, not in each caller, so every
+# read-modify-write path is covered; held until the process exits.
+STATE_LOCK=
+lock_state() {
+  # cmd_add loads twice (then cmd_list); a second flock on a new fd in the
+  # same process would wait on our own lock forever.
+  [ -z "$STATE_LOCK" ] || return 0
+  local f; f=$(file)
+  mkdir -p "$(dirname "$f")"
+  exec {STATE_LOCK}>"$f.lock"
+  flock -w 30 "$STATE_LOCK" || die "another nixarchy-flatsnap is changing $f; try again"
+}
 load_state() {
+  lock_state
   local f; f=$(file)
   if [ ! -f "$f" ]; then STATE='{"flatpaks":[],"snaps":[],"pendingRemoval":[]}'; return; fi
   # Exactly our shape, nothing else: anything more (a function, another
