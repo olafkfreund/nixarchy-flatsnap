@@ -347,6 +347,33 @@ numbers are only a guide.
 
     → verify by: all four hold. Record results in the PR description.
 
+    *As implemented:*
+    - **Setup.** The plugin was not staged by hand. On razer, a switch
+      relinks plugins through Home Manager, and a hand-placed plugin
+      directory makes the switch fail (it refuses to clobber it). So the PR's
+      plugin reaches razer through the flake instead:
+      - `/tmp/flake-10` is a clone of nixos_config at the commit razer's
+        baseline came from;
+      - `programs.nixarchy.flake` is forced to the clone, so apply never
+        writes the real flake;
+      - the `nixarchy/nixarchy-flatsnap` input is overridden to the PR head;
+      - built on p620, nix-copied, then `switch-to-configuration test` (no
+        new generation), and `omarchy-restart-shell`.
+    - **Check 2: PASSED live**, 2026-09-24 ~17:21 on razer, PR head
+      9495056:
+      - `flatsnap.nix` held
+        `{ services.foo.enable = true; programs.nixarchy.flatsnap.snaps = [ ]; }`;
+      - `Tab`, then `a`: the panel's message line read
+        `…/flatsnap.nix is not in the shape this tool writes; fix or move it, then retry`;
+      - the file's sha256 was identical before and after (`dd810307…`), and
+        no apply process started.
+    - **The first run was cut short.** Another session switched razer to
+      generation 2952 at 17:21:55, unannounced, during the claim. That ended
+      the `test` activation. No generation had been made, and the test
+      `flatsnap.nix` was removed.
+    - **Checks 1, 3 and 4** are to be redone against the new baseline, after
+      the queued razer work.
+
 12. **PR.** Open the PR against `main`, linking
     `intent/2026-09-24-10-apply-safety.md`,
     `spec/2026-09-24-10-apply-safety.md` and this plan, with `Closes #10`.
