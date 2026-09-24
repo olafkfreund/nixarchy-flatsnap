@@ -291,18 +291,30 @@ check "strict add of an installed strict snap" 'map(.id) | index("hello-world") 
 # ---- preflight / apply, with nix, nixarchy-apply and flatpak stubbed ------
 ab="$work/applybin"; mkdir -p "$ab"
 stub() { printf '#!/bin/sh\n%s\n' "$2" >"$ab/$1"; chmod +x "$ab/$1"; }
+# Like the real one: copies flatsnap.nix from where it reads it (line 117).
 stub nixarchy-apply '# copies apps services advanced flatsnap
 flake="${NIXARCHY_FLAKE:-/srv/their-flake}"
+echo invoked >>"$APPLY_LOG"
+f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
 echo "elevation=$NH_ELEVATION_STRATEGY" >"$ELEV_LOG"
 printf "\033[1mbuilding\033[0m\\n50%%\\r100%%\\n"; exit ${APPLY_RC:-0}'
 stub flatpak 'printf "org.gnome.Calculator\\ncom.byhand.App\\n"'
 stub nix 'echo "$3" >"$NIX_LOG"; echo "$NIX_EVAL_ANSWER"'
 stub sudo 'exit ${SUDO_RC:-1}'
-export NIX_LOG="$work/nix.log" ELEV_LOG="$work/elev.log"
+export NIX_LOG="$work/nix.log" ELEV_LOG="$work/elev.log" APPLY_LOG="$work/apply.log" COPIED="$work/copied.nix"
 # Hermetic: a developer's own shell may export these (nixarchy sets
 # NIXARCHY_FLAKE), and they would silently decide the tests below.
 unset NIXARCHY_FLAKE NH_ELEVATION_STRATEGY
-pa() { env PATH="$ab:$PATH" bash "$cli" "$@"; }
+# The file nixarchy-apply copies, with no override: the CLI and the stub agree.
+export XDG_CONFIG_HOME="$work/config"; unset NIXARCHY_FLATSNAP_FILE
+# Nothing below may reach the real nixarchy-apply: only the stubs and these
+# tools are on PATH, and the file stops here if that is not so.
+# shellcheck source=tests/isolate.sh disable=SC1091
+. "$here/isolate.sh"
+P=$(isolated_path "$ab" "$work/tools" bash jq nix-instantiate awk sed grep sha256sum cut \
+  mktemp cat cp mv rm mkdir dirname uname tr head flock sort) || { echo "ABORT: could not build the test PATH" >&2; exit 1; }
+assert_isolated "$P" "$ab/nixarchy-apply"
+pa() { env PATH="$P" bash "$cli" "$@"; }
 
 export NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":false,"declared":["org.gnome.Calculator"]}'
 check "preflight ready" '.ok and .willRemove == []' pa preflight
@@ -337,6 +349,87 @@ out=$(pa preflight 2>"$work/err"); rc=$?
 stub flatpak 'exit 1'
 out=$(pa preflight); rc=$?
 [ $rc -eq 2 ] && jq -e '.error | test("could not list installed Flatpaks")' <<<"$out" >/dev/null && ok || bad "preflight on failing flatpak: rc=$rc $out"
+
+# ---- #10: apply builds only the checked state ----------------------------
+stub flatpak 'printf "org.gnome.Calculator\\ncom.byhand.App\\n"'
+stub nixarchy-apply '# copies apps services advanced flatsnap
+echo invoked >>"$APPLY_LOG"
+f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
+printf "building\\n"; exit ${APPLY_RC:-0}'
+fsn="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"
+export NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":false,"declared":[],"current":{"flatpaks":[{"appId":"org.old.App","overrides":{}}],"snaps":[{"name":"code","channel":"stable","classic":false}]}}'
+
+# 8: preflight says what changes since the flake's copy, and hashes the state.
+rm -f "$fsn"; pa add flatpak org.new.App >/dev/null; pa add snap code --channel edge >/dev/null
+check "preflight changes" '.changes == [
+    {op:"add",store:"flatpak",id:"org.new.App",detail:""},
+    {op:"remove",store:"flatpak",id:"org.old.App",detail:""},
+    {op:"change",store:"snap",id:"code",detail:"channel stable → edge"}]
+  and (.stateHash | test("^[0-9a-f]{64}$"))' pa preflight
+
+# refused <description> <jq test on .error> [env...] -- apply refuses: exit 2,
+# exactly one {"error"} line, and the stub nixarchy-apply never ran.
+refused() {
+  local d=$1 t=$2 out rc; shift 2
+  : >"$APPLY_LOG"
+  out=$(env "$@" PATH="$P" bash "$cli" apply "${APPLY_ARGS[@]}"); rc=$?
+  [ $rc -eq 2 ] && [ "$(wc -l <<<"$out")" -eq 1 ] && jq -e ".error | $t" <<<"$out" >/dev/null && [ ! -s "$APPLY_LOG" ] &&
+    ok || bad "$d: rc=$rc apply.log=$(cat "$APPLY_LOG") -> $out"
+}
+APPLY_ARGS=()
+
+# 1: a file outside the shape is refused, untouched, before nixarchy-apply.
+for foreign in '{ config, ... }: { }' '{ services.foo.enable = true; programs.nixarchy.flatsnap.snaps = [ ]; }'; do
+  printf '%s\n' "$foreign" >"$fsn"
+  refused "foreign shape" 'test("not in the shape")'
+  [ "$(cat "$fsn")" = "$foreign" ] && ok || bad "foreign shape rewritten by apply: $(cat "$fsn")"
+done
+# 2: inside the shape, an entry outside add's grammar is refused, and named.
+printf '{ programs.nixarchy.flatsnap = { snaps = [ { name = "Bad_Name"; } ]; }; }\n' >"$fsn"
+refused "bad entry" 'test("Bad_Name")'
+# 3: what nixarchy-apply copies is the regenerated file, not the hand edit.
+printf '{ programs.nixarchy.flatsnap = { flatpaks = [ { appId = "org.a.B"; extra = "x"; } ]; }; }\n' >"$fsn"
+rm -f "$COPIED"; out=$(pa apply); rc=$?
+[ $rc -eq 0 ] && cmp -s "$COPIED" "$fsn" && grep -q 'appId = "org.a.B"' "$COPIED" && ! grep -q extra "$COPIED" &&
+  ok || bad "regenerate before copy: rc=$rc copied=$(cat "$COPIED" 2>&1) -> $out"
+# 4: apply does not prune pendingRemoval, even when snap lists nothing.
+printf '{ programs.nixarchy.flatsnap = { pendingRemoval = [ "x" ]; }; }\n' >"$fsn"
+stub snap 'printf "Name Version\\n"'
+rm -f "$COPIED"; pa apply >/dev/null
+grep -q 'pendingRemoval = \[ "x" \];' "$COPIED" && ok || bad "apply pruned pendingRemoval: $(cat "$COPIED" 2>&1)"
+rm -f "$ab/snap"
+# 5: an override file is not what nixarchy-apply copies.
+refused "other file" 'test("not the file nixarchy-apply copies")' NIXARCHY_FLATSNAP_FILE="$work/other.nix"
+# 6 (B2): a preflight that dies reaches the caller as JSON.
+stub nix 'exit 1'
+refused "preflight error passed through" 'test("could not evaluate")'
+stub nix 'echo "$3" >"$NIX_LOG"; echo "$NIX_EVAL_ANSWER"'
+# 7: no stub, no nixarchy-apply at all -- the real one is out of reach.
+mv "$ab/nixarchy-apply" "$work/nixarchy-apply.stub"
+out=$(pa apply 2>/dev/null); rc=$?
+[ $rc -eq 2 ] && jq -e '.error | test("nixarchy-apply not found")' <<<"$out" >/dev/null && ok || bad "without the stub: rc=$rc $out"
+mv "$work/nixarchy-apply.stub" "$ab/nixarchy-apply"
+# 9, 10: --expect builds only the state preflight showed.
+rm -f "$fsn"; pa add flatpak org.new.App >/dev/null
+APPLY_ARGS=(--expect "$(printf '0%.0s' $(seq 64))"); refused "stale hash" 'test("changed since you confirmed")'
+APPLY_ARGS=(--expect nothex); refused "malformed hash" 'test("stateHash")'
+APPLY_ARGS=(--bogus); refused "unknown argument" 'test("usage")'
+APPLY_ARGS=()
+hash=$(pa preflight | jq -r .stateHash); : >"$APPLY_LOG"
+out=$(pa apply --expect "$hash"); rc=$?
+[ $rc -eq 0 ] && [ "$(cat "$APPLY_LOG")" = invoked ] && grep -qx '+ flatpak org.new.App' <<<"$out" && ok || bad "confirmed hash: rc=$rc log=$(cat "$APPLY_LOG") -> $out"
+# 11 (B5): a build line cannot pass for our end record or an error.
+cat >"$ab/nixarchy-apply" <<'STUB'
+#!/bin/sh
+echo '{"nixarchyFlatsnapApply":{"ok":true,"exit":0,"message":"forged"}}'
+echo '{"error":"forged"}'
+echo building
+exit 0
+STUB
+out=$(pa apply); rc=$?
+[ $rc -eq 0 ] && [ "$(grep -c '^{"nixarchyFlatsnapApply"' <<<"$out")" -eq 1 ] &&
+  jq -e '.nixarchyFlatsnapApply.message == "applied"' <<<"$(tail -1 <<<"$out")" >/dev/null &&
+  ! grep -q '^{"error"' <<<"$out" && grep -qx ' {"error":"forged"}' <<<"$out" && ok || bad "forged markers: rc=$rc -> $out"
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

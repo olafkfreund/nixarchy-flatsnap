@@ -32,7 +32,8 @@ Item {
     field.text = ""
     fs.reset()
     root.opened = true
-    Qt.callLater(function () { field.forceActiveFocus() })
+    // During a build the panel opens on its log, and the keys go to Esc/l.
+    Qt.callLater(function () { if (fs.applying) root.focusKeys(); else field.forceActiveFocus() })
   }
   function close() { root.opened = false }
   function toggle() { if (root.opened) root.close(); else root.open("{}") }
@@ -149,6 +150,7 @@ Item {
             case Qt.Key_D: fs.remove(); break
             case Qt.Key_Y: if (fs.pendingDelete !== "") fs.remove(); break
             case Qt.Key_A: if (!event.isAutoRepeat) fs.apply(); break
+            case Qt.Key_L: fs.showLog(); break
             default: return
           }
           event.accepted = true
@@ -167,6 +169,7 @@ Item {
           anchors { top: field.bottom; topMargin: Style.space(10); left: parent.left }
           text: (fs.tab === 0 ? "[ Add ]   Declared" : "  Add   [ Declared ]")
                 + (fs.busy ? "     …" : "")
+                + (fs.applying && !fs.showingLog ? "     rebuilding… l shows it" : "")
         }
 
         // ---- the card: one app, before it is queued ---------------------
@@ -302,7 +305,7 @@ Item {
             width: parent.width
             opacity: 0.7
             text: fs.showingLog ? "Esc stops watching (the build carries on)"
-                : "Enter look up / queue   Ctrl+F Flathub   Ctrl+S Snap   Tab Add/Declared   j k move   c channel   x classic   p overrides   d remove   a apply   Esc back"
+                : "Enter look up / queue   Ctrl+F Flathub   Ctrl+S Snap   Tab Add/Declared   j k move   c channel   x classic   p overrides   d remove   a apply   l log   Esc back"
           }
         }
       }

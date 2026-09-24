@@ -56,8 +56,10 @@ after that is keyboard.</p>
     <div class="step">3 · Queue, then apply</div>
     <h3>A line in a Nix file, then a rebuild</h3>
     <p><code>Enter</code> writes the app into
-    <code>~/.config/nixarchy/flatsnap.nix</code>. <code>a</code> runs
-    <code>nixarchy-apply</code> and streams the build into the panel. Flatpaks
+    <code>~/.config/nixarchy/flatsnap.nix</code>. <code>a</code> checks that
+    file and lists what changes since the last apply. A second <code>a</code>
+    runs <code>nixarchy-apply</code> and streams the build into the panel
+    (<code>l</code> brings the log back after <code>Esc</code>). Flatpaks
     become <code>services.flatpak.packages</code>. Snaps are kept installed by
     a small reconciler on top of
     <a href="https://github.com/nix-community/nix-snapd">nix-snapd</a>.

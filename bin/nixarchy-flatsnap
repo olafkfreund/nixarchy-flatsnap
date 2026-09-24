@@ -14,6 +14,13 @@ FP_RE='^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*){2,}$'
 fp_id_ok() { [ ${#1} -le 255 ] && [[ $1 =~ $FP_RE ]]; }
 SNAP_RE='^[a-z0-9][a-z0-9-]{0,39}$'
 CHAN_RE='^(stable|candidate|beta|edge)$'
+# Flatpak override: Section.key=value. Context keys are lists (filesystems,
+# sockets, ...); everything else is a string, as in nix-flatpak's option.
+# The three parts are also what check_entries holds a hand edit to.
+OV_SEC='[A-Za-z][A-Za-z ]{0,40}'
+OV_KEY='[A-Za-z0-9_.-]{1,100}'
+OV_VAL='[A-Za-z0-9_./:~!@+=-]{1,200}'
+OV_RE="^($OV_SEC)\\.($OV_KEY)=($OV_VAL)\$"
 
 die() { jq -cn --arg e "$1" '{error: $e}'; exit 2; }
 
@@ -262,6 +269,45 @@ load_state() {
     die "$f is not in the shape this tool writes; fix or move it, then retry"
 }
 
+# load_state checks the keys; this checks what is inside them, against the
+# same grammars add uses, because a hand edit can put anything there and
+# apply builds it as root. jq lists "kind<TAB>value", bash tests each. jq
+# refuses control characters first, so every value is exactly one line.
+check_entries() {
+  local f kind val lines; f=$(file)
+  lines=$(jq -r '
+    def str($k): if type != "string" then "bad\t\(tojson) is not a string"
+      elif test("[[:cntrl:]]") then "bad\t\(tojson) has a control character"
+      else "\($k)\t\(.)" end;
+    def each($what; f): if type == "array" then .[] | f else "bad\t\($what) is not a list" end;
+    def obj($what; f): if type == "object" then f else "bad\t\($what) is not an attribute set" end;
+    def ov: obj("overrides"; to_entries[]
+      | (.key | str("sec")),
+        (.value | obj("an override section"; to_entries[]
+          | (.key | str("key")),
+            (.value | if type == "array" then .[] else . end | str("val")))));
+    def fp: obj("a flatpak entry"; (.appId | str("fp")), ((.overrides // {}) | ov));
+    def sn: obj("a snap entry"; (.name | str("snap")), ((.channel // "stable") | str("chan")),
+      (if (.classic // false | type) == "boolean" then empty else "bad\tclassic must be true or false" end));
+    (.flatpaks | each("flatpaks"; fp)),
+    (.snaps | each("snaps"; sn)),
+    (.pendingRemoval | each("pendingRemoval"; str("pending")))' <<<"$STATE") ||
+    die "$f: could not check its entries"
+  [ -n "$lines" ] || return 0
+  while IFS=$'\t' read -r kind val; do
+    case $kind in
+      fp) fp_id_ok "$val" || die "$f: Flatpak app ID \"$val\" is not valid; fix or remove it" ;;
+      snap|pending) [[ $val =~ $SNAP_RE ]] || die "$f: snap name \"$val\" is not valid; fix or remove it" ;;
+      chan) [[ $val =~ $CHAN_RE ]] || die "$f: snap channel \"$val\" is not stable, candidate, beta or edge" ;;
+      sec) [[ $val =~ ^$OV_SEC$ ]] || die "$f: override section \"$val\" is not valid; fix or remove it" ;;
+      key) [[ $val =~ ^$OV_KEY$ ]] || die "$f: override key \"$val\" is not valid; fix or remove it" ;;
+      val) [[ $val =~ ^$OV_VAL$ ]] || die "$f: override value \"$val\" is not valid; fix or remove it" ;;
+      bad) die "$f: $val; fix or remove it" ;;
+      *) die "$f: an entry has a value this tool cannot check; fix or remove it" ;;
+    esac
+  done <<<"$lines"
+}
+
 # JSON state -> Nix. Every string goes through nixstr; the ID grammars
 # already exclude \, " and ${, so this is the second line, not the first.
 render() {
@@ -281,7 +327,8 @@ render() {
         + (if (.overrides // {}) == {} then "" else " overrides = \(.overrides | nix);" end) + " }"),
     "    ];",
     "    snaps = [",
-    (.snaps[] | "      { name = \(.name | nixstr); channel = \(.channel | nixstr); classic = \(.classic | tostring); }"),
+    # The module defaults, for a hand-written { name = "x"; }.
+    (.snaps[] | "      { name = \(.name | nixstr); channel = \(.channel // "stable" | nixstr); classic = \(.classic // false | tostring); }"),
     "    ];",
     # Un-declared snaps keep snapd on until they are actually gone; see module.nix.
     (if .pendingRemoval == [] then empty
@@ -290,18 +337,24 @@ render() {
     "}"'
 }
 
+# JSON state in, JSON state out. A pending removal that snap no longer lists
+# is done: drop it, so the next apply can turn snapd off. Only on a real
+# answer: with snap absent, or present but not answering (snapd down), keep
+# them all. add and rm do this; apply does not, so a snapd that is down at
+# apply time cannot empty the list.
+prune_pending() {
+  local st sn; st=$(cat)
+  if sn=$(installed_ids snap) && [ "$sn" != null ]; then
+    st=$(jq -c --argjson i "$sn" '.pendingRemoval |= map(select(. as $n | $i | index($n) != null))' <<<"$st")
+  fi
+  printf '%s\n' "$st"
+}
+
 # Write aside, parse-check, rename: $f is only ever replaced by an atomic mv
 # of a file that parsed, so a failure leaves it exactly as it was.
 write_state() {
   local f tmp st; f=$(file)
   st=$(cat)
-  # A pending removal that snap no longer lists is done: drop it, so the
-  # next apply can turn snapd off. Only on a real answer: with snap absent,
-  # or present but not answering (snapd down), keep them all.
-  local sn
-  if sn=$(installed_ids snap) && [ "$sn" != null ]; then
-    st=$(jq -c --argjson i "$sn" '.pendingRemoval |= map(select(. as $n | $i | index($n) != null))' <<<"$st")
-  fi
   mkdir -p "$(dirname "$f")"
   tmp=$(mktemp "$f.XXXXXX")
   render <<<"$st" >"$tmp"
@@ -354,10 +407,6 @@ cmd_list() {
         installed: (if $i.snap == null then null else (.name as $a | $i.snap | index($a) != null) end)}) ]'
 }
 
-# Flatpak override: Section.key=value. Context keys are lists (filesystems,
-# sockets, ...); everything else is a string, as in nix-flatpak's option.
-OV_RE='^([A-Za-z][A-Za-z ]{0,40})\.([A-Za-z0-9_.-]{1,100})=([A-Za-z0-9_./:~!@+=-]{1,200})$'
-
 cmd_add() {
   local st
   case ${1:-} in
@@ -399,6 +448,7 @@ cmd_add() {
       ;;
     *) die "usage: nixarchy-flatsnap add flatpak|snap <id> ..." ;;
   esac
+  st=$(prune_pending <<<"$st")
   write_state <<<"$st"
   cmd_list
 }
@@ -415,6 +465,7 @@ cmd_rm() {
     *) die "store must be flatpak or snap" ;;
   esac
   [ -n "$st" ] || die "$2 is not declared"
+  st=$(prune_pending <<<"$st")
   write_state <<<"$st"
   cmd_list
 }
@@ -443,35 +494,93 @@ flake() {
 #   - is the module imported? Without it, the copied flatsnap.nix names
 #     options that do not exist, and the rebuild fails on evaluation.
 #   - with uninstallUnmanaged on, which installed Flatpaks will be removed?
+#   - what changes against the flake's copy, i.e. since the last apply?
+# The file is checked first, so a hand edit is refused before any prompt.
 cmd_preflight() {
   local host ev fp
   host=$(uname -n)
   command -v nixarchy-apply >/dev/null || die "nixarchy-apply not found: is this nixarchy?"
+  load_state
+  check_entries
   ev=$(nix eval --json "$(flake)#nixosConfigurations.\"$host\"" --apply '
-    c: {
+    c: let f = c.config.programs.nixarchy.flatsnap or { }; in {
       hasModule = (c.options.programs.nixarchy or { }) ? flatsnap;
       uninstallUnmanaged = c.config.services.flatpak.uninstallUnmanaged or false;
       declared = map (p: if builtins.isString p then p else p.appId)
         (c.config.services.flatpak.packages or [ ]);
+      current = {
+        flatpaks = map (p: { inherit (p) appId overrides; }) (f.flatpaks or [ ]);
+        snaps = map (s: { inherit (s) name channel classic; }) (f.snaps or [ ]);
+      };
     }' 2>/dev/null) || die "could not evaluate nixosConfigurations.$host in $(flake)"
   fp=$(installed_ids flatpak) || die "could not list installed Flatpaks, so preflight cannot say what apply would remove"
   [ "$fp" != null ] || fp='[]'   # no flatpak: nothing installed to remove
-  jq -cn --argjson e "$ev" --argjson fp "$fp" --arg host "$host" '
-    {
+  jq -cn --argjson e "$ev" --argjson fp "$fp" --arg host "$host" --argjson st "$STATE" --arg hash "$(state_hash)" '
+    def fps: map({key: .appId, value: (.overrides // {})}) | from_entries;
+    def sns: map({key: .name, value: {channel: (.channel // "stable"), classic: (.classic // false)}}) | from_entries;
+    ($e.current // {flatpaks: [], snaps: []}) as $cur
+    | ($st.flatpaks | fps) as $nf | ($cur.flatpaks | fps) as $of
+    | ($st.snaps | sns) as $ns | ($cur.snaps | sns) as $os
+    | {
       ok: $e.hasModule,
       message: (if $e.hasModule then "ready"
         else "the flatsnap module is not in nixosConfigurations.\($host): add inputs.nixarchy-flatsnap.nixosModules.default to its modules" end),
-      willRemove: (if $e.uninstallUnmanaged then $fp - $e.declared else [] end)
+      willRemove: (if $e.uninstallUnmanaged then $fp - $e.declared else [] end),
+      changes: [
+        ($nf | keys[] | select(. as $k | $of | has($k) | not) | {op: "add", store: "flatpak", id: ., detail: ""}),
+        ($ns | keys[] | select(. as $k | $os | has($k) | not) | {op: "add", store: "snap", id: ., detail: ""}),
+        ($of | keys[] | select(. as $k | $nf | has($k) | not) | {op: "remove", store: "flatpak", id: ., detail: ""}),
+        ($os | keys[] | select(. as $k | $ns | has($k) | not) | {op: "remove", store: "snap", id: ., detail: ""}),
+        ($nf | keys[] | select(. as $k | ($of | has($k)) and $of[$k] != $nf[$k])
+          | {op: "change", store: "flatpak", id: ., detail: "overrides changed"}),
+        ($ns | keys[] | select(. as $k | ($os | has($k)) and $os[$k] != $ns[$k]) | . as $k
+          | {op: "change", store: "snap", id: $k, detail: ([
+              (if $os[$k].channel != $ns[$k].channel then "channel \($os[$k].channel) → \($ns[$k].channel)" else empty end),
+              (if $os[$k].classic != $ns[$k].classic then (if $ns[$k].classic then "classic on" else "classic off" end) else empty end)
+            ] | join(", "))})
+      ],
+      stateHash: $hash
     }'
 }
+
+# What apply --expect compares: the parsed state, keys sorted.
+state_hash() { jq -cS . <<<"$STATE" | sha256sum | cut -c1-64; }
 
 # Copy the selection into the flake and rebuild -- through nixarchy-apply,
 # never around it. Streaming and the pkexec choice follow nixarchy-pkg's
 # cmd_apply; see the comment there for why each is the way it is.
+#
+# What gets built is what was checked: the file is re-read and re-checked
+# here, rewritten from that parse (so nothing outside our shape reaches the
+# copy), and with --expect it must still be the state preflight showed.
 cmd_apply() {
-  local pf statuses rc filt
-  pf=$(cmd_preflight)
+  local pf statuses rc filt expect="" want
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --expect)
+        [ $# -ge 2 ] && [[ $2 =~ ^[0-9a-f]{64}$ ]] || die "--expect needs the stateHash from preflight"
+        expect=$2; shift 2 ;;
+      *) die "usage: nixarchy-flatsnap apply [--expect <stateHash>]" ;;
+    esac
+  done
+  want="${XDG_CONFIG_HOME:-$HOME/.config}/nixarchy/flatsnap.nix"
+  [ "$(file)" = "$want" ] || die "NIXARCHY_FLATSNAP_FILE is not the file nixarchy-apply copies ($want)"
+  # Not a bare assignment: under set -e a failing $(...) would end the script
+  # here with nothing on stdout, and the panel would have no error to show.
+  pf=$(cmd_preflight) || { printf '%s\n' "$pf"; exit 2; }
   jq -e '.ok' <<<"$pf" >/dev/null || { jq -c '{error: .message}' <<<"$pf"; exit 2; }
+  # Locked from here until this process exits, i.e. through nixarchy-apply's
+  # copy and the build: an add or rm now waits, then says so.
+  load_state
+  check_entries
+  if [ -n "$expect" ] && [ "$(state_hash)" != "$expect" ]; then
+    die "the declared set changed since you confirmed; press a again"
+  fi
+  # Regenerate without pruning pendingRemoval: that is add/rm's job, and a
+  # snapd that is down now must not empty it. No file, nothing to write.
+  if [ -f "$(file)" ]; then write_state <<<"$STATE"; fi
+  jq -r '.changes[] | ({add: "+", remove: "−", change: "~"}[.op]) + " \(.store) \(.id)"
+           + (if .detail == "" then "" else ": \(.detail)" end)' <<<"$pf"
   jq -r '.willRemove[] | "uninstallUnmanaged is on: this apply removes \(.)"' <<<"$pf"
   # pkexec, because the panel has no tty for a sudo password; Omarchy's
   # polkit agent asks on screen. Unless sudo needs no password at all: then
@@ -482,10 +591,15 @@ cmd_apply() {
     if sudo -n true 2>/dev/null; then elev=passwordless; else elev=pkexec; fi
   fi
   set +e +o pipefail
+  # The lock stays with this process, not with nixarchy-apply's children.
+  # The filter indents any build line that starts like one of our records,
+  # so only the jq below can end the apply for the panel.
   NO_COLOR=1 NH_ELEVATION_STRATEGY="$elev" \
-    nixarchy-apply --yes --no-preview </dev/null 2>&1 |
+    nixarchy-apply --yes --no-preview </dev/null 2>&1 {STATE_LOCK}>&- |
     awk '{ gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\033[()][A-Za-z0-9]/, "")
-           sub(/.*\r/, ""); print; fflush() }'
+           sub(/.*\r/, "")
+           if (index($0, "{\"nixarchyFlatsnapApply\"") == 1 || index($0, "{\"error\"") == 1) $0 = " " $0
+           print; fflush() }'
   statuses=("${PIPESTATUS[@]}")
   set -e -o pipefail
   rc=${statuses[0]}; filt=${statuses[1]}
@@ -505,7 +619,7 @@ main() {
     add) cmd_add "$@" ;;
     rm) cmd_rm "$@" ;;
     preflight) cmd_preflight ;;
-    apply) cmd_apply ;;
+    apply) cmd_apply "$@" ;;
     *) die "usage: nixarchy-flatsnap resolve|search|list|add|rm|preflight|apply ..." ;;
   esac
 }
