@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 23
 spec: spec/2026-09-24-23-detach-apply.md
 ---
