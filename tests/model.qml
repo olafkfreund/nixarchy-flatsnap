@@ -184,8 +184,6 @@ ShellRoot {
     t.ok(!fs.queueArmed, "a new card clears the arm")
 
     // ---- #12: sandbox escapes are named; other overrides are not -------
-    // No Bus Policy case: the field splits on spaces, so a section with a
-    // space cannot be typed there (see plan/, step 6).
     var escaping = ["Context.filesystems=home", "Context.filesystems=host:ro", "Context.filesystems=~",
                     "Context.sockets=system-bus", "Context.sockets=ssh-auth", "Context.sockets=gpg-agent",
                     "Context.devices=all"]
@@ -207,6 +205,55 @@ ShellRoot {
     fs.overrides = "Context.filesystems=xdg-pictures:ro Context.sockets=ssh-auth"; fs.queue()
     t.ok(fs.message.indexOf("ESCAPES") >= 0 && fs.message.indexOf("ssh-auth") >= 0, "mixed: the escape is named: " + fs.message)
     fs.disarm()
+
+    // ---- #28: whole overrides, so a section may contain spaces ----------
+    // argv after the second Enter: the values that follow each --override.
+    function ovArgs() {
+      var c = fs._writer.command, out = []
+      for (var i = 0; i < c.length - 1; i++) if (c[i] === "--override") out.push(c[i + 1])
+      return out
+    }
+    // The placeholder: tokenised as the whitespace split did.
+    fs.overrides = "Context.filesystems=xdg-pictures:ro  Environment.LC_ALL=C.UTF-8"; fs.queue()
+    t.ok(fs.queueArmed && !fs.busy, "placeholder: the first Enter arms: " + fs.message)
+    fs.queue()
+    t.ok(fs.busy && JSON.stringify(ovArgs()) === JSON.stringify(["Context.filesystems=xdg-pictures:ro", "Environment.LC_ALL=C.UTF-8"]),
+         "placeholder: two --override, as before: " + JSON.stringify(ovArgs()))
+    fs.busy = false
+    fs._showCard({ store: "flatpak", id: "org.gnome.Calculator", name: "Calculator", permissions: {}, sandboxEscapes: esc })
+    var bus = ["Session Bus Policy.org.freedesktop.Flatpak=talk", "Session Bus Policy.org.freedesktop.Flatpak=own",
+               "System Bus Policy.org.freedesktop.login1=own"]
+    for (var b = 0; b < bus.length; b++) {
+      fs.overrides = bus[b]; fs.queue()
+      t.ok(fs.queueArmed && !fs.busy && fs.message.indexOf("ESCAPES") >= 0 && fs.message.indexOf(bus[b]) >= 0,
+           bus[b] + " is named as an escape: " + fs.message)
+      fs.queue()
+      t.ok(fs.busy && JSON.stringify(ovArgs()) === JSON.stringify([bus[b]]),
+           bus[b] + " is one --override: " + JSON.stringify(ovArgs()))
+      fs.busy = false
+      fs._showCard({ store: "flatpak", id: "org.gnome.Calculator", name: "Calculator", permissions: {}, sandboxEscapes: esc })
+    }
+    fs.overrides = "System Bus Policy.org.example.Foo=see"; fs.queue()
+    t.ok(fs.queueArmed && fs.message.indexOf("ESCAPES") < 0 && fs.message.indexOf("System Bus Policy.org.example.Foo=see") >= 0,
+         "Bus Policy see gets the ordinary prompt: " + fs.message)
+    fs.disarm()
+    fs.overrides = "Context.filesystems=xdg-pictures:ro Session Bus Policy.org.freedesktop.Flatpak=talk"; fs.queue()
+    t.ok(fs.message.indexOf("ESCAPES") >= 0 && fs.message.indexOf("Session Bus Policy.org.freedesktop.Flatpak=talk") >= 0,
+         "mixed Bus Policy: the escape is named: " + fs.message)
+    fs.queue()
+    t.ok(fs.busy && JSON.stringify(ovArgs()) === JSON.stringify(["Context.filesystems=xdg-pictures:ro", "Session Bus Policy.org.freedesktop.Flatpak=talk"]),
+         "mixed Bus Policy: both, each whole: " + JSON.stringify(ovArgs()))
+    fs.busy = false
+    fs._showCard({ store: "flatpak", id: "org.gnome.Calculator", name: "Calculator", permissions: {}, sandboxEscapes: esc })
+    // Text that is not an override: named, not armed, nothing written.
+    var garbage = [["Context.filesystems=xdg-pictures:ro bad", "bad"], ["bad", "bad"],
+                   ["Context.filesystems=$(id)", "Context.filesystems=$(id)"]]
+    for (var g = 0; g < garbage.length; g++) {
+      fs.overrides = garbage[g][0]; fs.queue()
+      t.ok(!fs.queueArmed && !fs.busy && fs.message.indexOf("Not an override: " + garbage[g][1]) === 0,
+           garbage[g][0] + " is refused on the first Enter: " + fs.message)
+    }
+    fs.overrides = ""
     // No list on the card (an older CLI): every override is treated as one.
     fs._showCard({ store: "flatpak", id: "org.gnome.Calculator", name: "Calculator", permissions: {} })
     fs.overrides = "Context.filesystems=xdg-pictures:ro"; fs.queue()

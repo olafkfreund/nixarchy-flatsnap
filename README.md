@@ -53,7 +53,7 @@ Flatpak or Snap ID grammar.
 | `Enter` | on a result: open it; on a card: queue it |
 | `c` | cycle through the channels this Snap publishes: stable → candidate → beta → edge |
 | `x` `x` | switch a Snap to classic confinement (two presses: it removes the sandbox) |
-| `p` | Flatpak overrides, e.g. `Context.filesystems=xdg-pictures:ro` (queuing with overrides takes a second `Enter`) |
+| `p` | Flatpak overrides, e.g. `Context.filesystems=xdg-pictures:ro`; several separated by spaces; a section may contain spaces, e.g. `Session Bus Policy.org.freedesktop.Flatpak=talk` (queuing with overrides takes a second `Enter`) |
 | `Enter` `Enter` | queue a classic Snap or a Flatpak with overrides: the first `Enter` says what leaves the sandbox |
 | `Tab` | switch between *Add* and *Declared* |
 | `d` then `y` | un-declare the selected app |
@@ -187,10 +187,6 @@ the list.
 | `Context.devices=all` | every device, including cameras and input |
 | `Session Bus Policy.org.freedesktop.Flatpak=talk` or `own` | running commands outside the sandbox |
 | `System Bus Policy.<any name>=talk` or `own` | talking to system services |
-
-The two Bus Policy rows cannot be typed into the panel's overrides field yet
-(it splits on spaces). They apply to `nixarchy-flatsnap add` on the command
-line.
 
 ## Rollback
 

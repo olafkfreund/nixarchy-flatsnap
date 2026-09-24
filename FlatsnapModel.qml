@@ -23,7 +23,7 @@ QtObject {
   property bool classic: false
   property bool classicArmed: false   // first x arms, second x confirms
   property bool classicChosen: false  // x x on a channel the store publishes strict
-  property string overrides: ""       // "Section.key=value ..." for Flatpaks
+  property string overrides: ""       // Section.key=value, whitespace-separated; a section may contain spaces
   // The next Enter queues: a classic snap or any override leaves or widens
   // a sandbox, so the first Enter only says what it will do.
   property bool queueArmed: false
@@ -218,7 +218,14 @@ QtObject {
       if (classic) args.push("--classic")
     } else {
       args = ["add", "flatpak", card.id]
-      var ov = overrides.trim().split(/\s+/).filter(function (s) { return s.length > 0 })
+      var r = _splitOverrides(overrides), ov = r.ov
+      // Text that is not an override: say which part, and do not arm.
+      if (r.bad !== "") {
+        queueArmed = false
+        message = "Not an override: " + (r.bad.length > 60 ? r.bad.slice(0, 60) + "…" : r.bad)
+                  + " (Section.key=value, separated by spaces)"
+        return
+      }
       // An override widens (or narrows) the sandbox, so it is confirmed the
       // way classic confinement is: the first Enter says what it will do,
       // and names the ones on the CLI's escape list with what they grant.
@@ -227,7 +234,7 @@ QtObject {
         var esc = ov.map(_escapes).filter(function (s) { return s !== "" })
         message = esc.length > 0
           ? "Enter again: " + card.id + " ESCAPES its sandbox — " + esc.join("; ")
-          : "Enter again: change " + card.id + "'s sandbox with " + ov.join("  ")
+          : "Enter again: change " + card.id + "'s sandbox with " + ov.join(", ")
         return
       }
       for (var i = 0; i < ov.length; i++) args.push("--override", ov[i])
@@ -252,6 +259,21 @@ QtObject {
         return o + ": " + e.says
     }
     return ""
+  }
+
+  // One override from the front of the text. Same grammar as OV_SEC, OV_KEY
+  // and OV_VAL in bin/nixarchy-flatsnap; change both together. Keys and
+  // values have no spaces, so a space inside an override is in its section
+  // (Session Bus Policy), and a value ends at the next whitespace.
+  readonly property var _ovHead:
+    /^\s*([A-Za-z][A-Za-z ]{0,40}\.[A-Za-z0-9_.-]{1,100}=[A-Za-z0-9_.\/:~!@+=-]{1,200})(?=\s|$)/
+
+  // {ov: [override, ...], bad: "" or the text from the first part that does
+  // not parse}. Whole overrides left to right, not a split on whitespace.
+  function _splitOverrides(text) {
+    var s = String(text).trim(), ov = [], at = 0, m
+    while (at < s.length && (m = _ovHead.exec(s.slice(at)))) { ov.push(m[1]); at += m[0].length }
+    return { ov: ov, bad: s.slice(at).trim() }
   }
 
   function remove() {

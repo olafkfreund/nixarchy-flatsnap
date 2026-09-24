@@ -152,6 +152,11 @@ parses
 check "add flatpak with overrides" '.[0].overrides == {"Context":{"filesystems":["xdg-pictures:ro","~/Games"]},"Environment":{"LC_ALL":"C.UTF-8"}}' \
   run add flatpak org.gnome.Calculator --override Context.filesystems=xdg-pictures:ro --override Context.filesystems=~/Games --override Environment.LC_ALL=C.UTF-8
 parses
+# A section with spaces (#28): what the panel now passes as one --override.
+check "add flatpak with Bus Policy overrides" '.[0].overrides == {"Session Bus Policy":{"org.freedesktop.Flatpak":"talk"},"System Bus Policy":{"org.freedesktop.login1":"own"}}' \
+  run add flatpak org.gnome.Calculator --override "Session Bus Policy.org.freedesktop.Flatpak=talk" --override "System Bus Policy.org.freedesktop.login1=own"
+parses
+check "Bus Policy survives list" '.[0].overrides["Session Bus Policy"]["org.freedesktop.Flatpak"] == "talk"' run list
 check "add snap" '.[1] == {store:"snap",id:"code",channel:"edge",classic:true,installed:null}' run add snap code --channel edge --classic
 parses
 check "re-add replaces, no duplicate" '(map(select(.id=="code")) | length) == 1 and .[1].channel == "stable"' run add snap code
