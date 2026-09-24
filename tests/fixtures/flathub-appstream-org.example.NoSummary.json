@@ -1,6 +1,6 @@
 {
-  "name": "Calculator",
-  "summary": "Perform arithmetic, scientific or financial calculations",
+  "name": "No Summary",
+  "summary": "Appstream only: the summary lookup fails",
   "developer_name": "The GNOME Project",
   "project_license": "GPL-3.0-or-later",
   "metadata": {

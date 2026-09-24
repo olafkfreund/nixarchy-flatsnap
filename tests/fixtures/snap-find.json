@@ -6,7 +6,8 @@
         "title": "hello",
         "summary": "GNU Hello, the \"hello world\" snap",
         "publisher": {
-          "display-name": "Canonical"
+          "display-name": "Canonical",
+          "validation": "verified"
         }
       }
     },
@@ -16,7 +17,8 @@
         "title": "Hello World",
         "summary": "The 'hello-world' of snaps",
         "publisher": {
-          "display-name": "Canonical"
+          "display-name": "Canonical",
+          "validation": "verified"
         }
       }
     },
@@ -26,7 +28,8 @@
         "title": "hello-pasman",
         "summary": "Hello and welcome greetings.",
         "publisher": {
-          "display-name": "pasman1"
+          "display-name": "pasman1",
+          "validation": "unproven"
         }
       }
     }

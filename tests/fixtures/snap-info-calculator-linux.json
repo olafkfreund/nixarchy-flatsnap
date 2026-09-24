@@ -1,0 +1,22 @@
+{
+  "name": "calculator-linux",
+  "snap": {
+    "title": "calculator-linux",
+    "summary": "Math Solver & Calculator",
+    "license": "unset",
+    "publisher": {
+      "display-name": "Shah Faishal Khan",
+      "validation": "unproven"
+    }
+  },
+  "channel-map": [
+    {
+      "channel": {
+        "name": "stable",
+        "risk": "stable",
+        "track": "latest"
+      },
+      "confinement": "strict"
+    }
+  ]
+}

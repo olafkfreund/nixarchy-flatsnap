@@ -99,7 +99,7 @@ refuse 'no-such-snap'
 refuse 'org.example.DoesNotExist'
 }
 
-expect 'calculator' '.store=="ask" and (.candidates | length) == 3 and .candidates[0].id == "org.gnome.Calculator"'
+expect 'calculator' '.store=="ask" and (.candidates | length) == 4 and .candidates[0].id == "org.gnome.Calculator"'
 
 # ---- search ---------------------------------------------------------------
 run() { bash "$cli" "$@"; }

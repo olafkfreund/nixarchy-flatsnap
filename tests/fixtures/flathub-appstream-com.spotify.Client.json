@@ -1,0 +1,15 @@
+{
+  "name": "Spotify",
+  "summary": "Online music streaming service",
+  "developer_name": "Spotify",
+  "project_license": "LicenseRef-proprietary=https://www.spotify.com/us/legal/end-user-agreement/",
+  "metadata": {
+    "flathub::verification::login_is_organization": null,
+    "flathub::verification::verified": null,
+    "flathub::verification::method": null,
+    "flathub::verification::timestamp": null,
+    "flathub::verification::login_name": null,
+    "flathub::verification::login_provider": null,
+    "flathub::verification::website": null
+  }
+}

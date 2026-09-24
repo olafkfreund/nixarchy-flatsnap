@@ -1,0 +1,6 @@
+{
+  "name": "No Meta",
+  "summary": "Appstream without its metadata object",
+  "developer_name": "The GNOME Project",
+  "project_license": "GPL-3.0-or-later"
+}
