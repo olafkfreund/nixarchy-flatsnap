@@ -54,6 +54,15 @@ Item {
   }
   // A page keeps the last line of the old one in sight.
   function pageOf(view) { return view.height - lineMetrics.lineSpacing }
+  // j k, Up Down, PgUp PgDn: how far they scroll `view`, or 0 for any other key.
+  function scrollKey(k, bare, view) {
+    if (k === Qt.Key_Down || (bare && k === Qt.Key_J)) return lineMetrics.lineSpacing
+    if (k === Qt.Key_Up || (bare && k === Qt.Key_K)) return -lineMetrics.lineSpacing
+    if (k === Qt.Key_PageDown) return root.pageOf(view)
+    if (k === Qt.Key_PageUp) return -root.pageOf(view)
+    return 0
+  }
+  function scrollLog(dy) { root.scrollBy(logView, dy) }
 
   // One line of plain text in the menu's colours. Everything shown here
   // came from a store or a build log, so it is never markup.
@@ -111,6 +120,10 @@ Item {
             // ESC leaves the build running: it is elevating and switching a
             // system, and stopping it half way is never what ESC meant.
             if (k === Qt.Key_Escape) { fs.showingLog = false; root.focusKeys(); event.accepted = true }
+            else {
+              var logDy = root.scrollKey(k, bare, logView)
+              if (logDy !== 0) { root.scrollLog(logDy); event.accepted = true }
+            }
             return
           }
 
@@ -120,6 +133,15 @@ Item {
               && !(enter && fs.queueArmed)
               && (fs.pendingDelete !== "" || fs.applyArmed || fs.classicArmed || fs.queueArmed)) {
             fs.disarm(); fs.message = ""
+          }
+
+          // On a card, the move keys scroll it: the list they moved is hidden.
+          // j k are letters, so they scroll only when no field has the
+          // keyboard; the arrows and pages also take it back from a field,
+          // which would otherwise scroll out of sight with the keyboard in it.
+          if (fs.view === "card") {
+            var dy = root.scrollKey(k, bare && !typing, cardView)
+            if (dy !== 0) { root.scrollBy(cardView, dy); if (typing) root.focusKeys(); event.accepted = true; return }
           }
 
           if (event.modifiers & Qt.ControlModifier) {

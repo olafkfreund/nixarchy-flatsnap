@@ -127,17 +127,17 @@ number in its body.
      `return`: bare `j`/Down scroll `logView` by one line, bare `k`/Up by
      minus one line, and PgDn/PgUp by a page. Each one is accepted and
      then updates `logView.follow` (step 7). Esc is unchanged.
-   - **Card, arrows and pages.** In the main `switch` (`:116-138`):
-     - `Qt.Key_Down`/`Qt.Key_Up`, if `fs.view === "card"`: scroll
-       `cardView` by ± one line. Then, if `typing`, call
-       `root.focusKeys()`. Otherwise keep today's `fs.moveCursor`
-       behaviour.
-     - New `Qt.Key_PageDown`/`Qt.Key_PageUp` cases: scroll `cardView` by
-       ± a page on a card, then `focusKeys()` if `typing`. Elsewhere they
-       are not accepted.
-   - **Card, letters.** In the single-letter `switch` (`:143-155`): `J`/`K`
-     scroll `cardView` when `fs.view === "card"`, and call `fs.moveCursor`
-     otherwise.
+   - **Card.** One block after the confirmation-cancel rule and before the
+     Ctrl and main `switch`es: if `fs.view === "card"`, `scrollKey(k,
+     bare && !typing, cardView)` gives the distance for Down/Up (± a line),
+     PgDn/PgUp (± a page) and bare `j`/`k` (± a line, not while typing).
+     A non-zero distance scrolls `cardView`, calls `root.focusKeys()` if
+     `typing`, and is accepted. The existing Down/Up and `J`/`K` cases
+     are left as they are and so still call `fs.moveCursor` in the other
+     views. PgUp/PgDn are not accepted outside the card and the log.
+     *(Deviation from the first draft of this step, which edited each
+     `switch` case: one block covers the same keys with the same
+     behaviour, and does not touch the cases.)*
    - The confirmation-cancel rule (`:103-109`) is unchanged, so a scroll
      key still cancels a pending confirmation, like any other key.
 
