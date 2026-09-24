@@ -62,7 +62,10 @@ Item {
     if (k === Qt.Key_PageUp) return -root.pageOf(view)
     return 0
   }
-  function scrollLog(dy) { root.scrollBy(logView, dy) }
+  function scrollLog(dy) {
+    root.scrollBy(logView, dy)
+    logView.follow = logView.contentY >= logView.contentHeight - logView.height - 1
+  }
 
   // One line of plain text in the menu's colours. Everything shown here
   // came from a store or a build log, so it is never markup.
@@ -367,7 +370,15 @@ Item {
           anchors { top: tabs.bottom; topMargin: Style.space(12); left: parent.left; right: parent.right; bottom: footer.top }
           contentHeight: logText.implicitHeight
           clip: true
-          onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
+          // It follows new lines only while it is at its end: scrolled up to
+          // read back, it stays put until scrolled back down.
+          property bool follow: true
+          function toEnd() { contentY = Math.max(0, contentHeight - height) }
+          onContentHeightChanged: if (follow) toEnd()
+          Connections {
+            target: fs
+            function onShowingLogChanged() { if (fs.showingLog) { logView.follow = true; logView.toEnd() } }
+          }
           Line { id: logText; width: logView.width; text: fs.applyLog.join("\n") }
         }
         MoreMarker { view: logView }
