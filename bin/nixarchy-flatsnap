@@ -579,31 +579,61 @@ cmd_preflight() {
 # What apply --expect compares: the parsed state, keys sorted.
 state_hash() { jq -cS . <<<"$STATE" | sha256sum | cut -c1-64; }
 
+# The unit a rebuild runs in: nixarchy-apply --detach's own
+# (nixarchy-apply:53), so a terminal --detach and a panel apply see each
+# other running and refuse, and systemd refuses a second start of it.
+# ponytail: nixarchy's unit name and SubState read directly; ask
+# nixarchy-apply --status/--log once nixarchy has them (#23's follow-up).
+UNIT=nixarchy-rebuild
+marker() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/nixarchy-flatsnap/apply"; }
+unit_prop() { systemctl --user show -p "$1" --value "$UNIT" 2>/dev/null || true; }
+die3() { jq -cn --arg e "$1" '{error: $e}'; exit 3; }
+
+# pkexec, because the panel has no tty for a sudo password; Omarchy's polkit
+# agent asks on screen. Unless sudo needs no password at all: then nh's
+# `passwordless` asks nothing the user has not already waived, and a polkit
+# prompt would be the only thing standing between them and apply.
+elevation() {
+  local elev=${NH_ELEVATION_STRATEGY:-}
+  if [ -z "$elev" ]; then
+    if sudo -n true 2>/dev/null; then elev=passwordless; else elev=pkexec; fi
+  fi
+  printf '%s' "$elev"
+}
+
 # Copy the selection into the flake and rebuild -- through nixarchy-apply,
-# never around it. Streaming and the pkexec choice follow nixarchy-pkg's
-# cmd_apply; see the comment there for why each is the way it is.
+# never around it -- in the user unit $UNIT, so the build outlives the shell
+# that asked for it (#23). Streaming and the pkexec choice follow
+# nixarchy-pkg's cmd_apply.
 #
 # What gets built is what was checked: the file is re-read and re-checked
 # here, rewritten from that parse (so nothing outside our shape reaches the
-# copy), and with --expect it must still be the state preflight showed.
+# copy), and with --expect it must still be the state preflight showed. The
+# unit checks it all again under its own lock, which it holds through the
+# copy and the build: the lock cannot pass from this process to the unit.
 cmd_apply() {
-  local pf statuses rc filt expect="" want
+  local pf expect="" in_unit="" want sub id hash err
   while [ $# -gt 0 ]; do
     case $1 in
       --expect)
         [ $# -ge 2 ] && [[ $2 =~ ^[0-9a-f]{64}$ ]] || die "--expect needs the stateHash from preflight"
         expect=$2; shift 2 ;;
+      --in-unit) in_unit=1; shift ;;
       *) die "usage: nixarchy-flatsnap apply [--expect <stateHash>]" ;;
     esac
   done
   want="${XDG_CONFIG_HOME:-$HOME/.config}/nixarchy/flatsnap.nix"
   [ "$(file)" = "$want" ] || die "NIXARCHY_FLATSNAP_FILE is not the file nixarchy-apply copies ($want)"
+  [ -z "$in_unit" ] || apply_in_unit "$expect"
+  # Before preflight: a running build holds the state lock until it ends,
+  # and preflight would wait on it and then fail with a lock message.
+  case $(unit_prop SubState) in
+    running | start*) die3 "a rebuild is already running — l shows it" ;;
+  esac
   # Not a bare assignment: under set -e a failing $(...) would end the script
   # here with nothing on stdout, and the panel would have no error to show.
   pf=$(cmd_preflight) || { printf '%s\n' "$pf"; exit 2; }
   jq -e '.ok' <<<"$pf" >/dev/null || { jq -c '{error: .message}' <<<"$pf"; exit 2; }
-  # Locked from here until this process exits, i.e. through nixarchy-apply's
-  # copy and the build: an add or rm now waits, then says so.
   load_state
   check_entries
   if [ -n "$expect" ] && [ "$(state_hash)" != "$expect" ]; then
@@ -611,23 +641,62 @@ cmd_apply() {
   fi
   # Regenerate without pruning pendingRemoval: that is add/rm's job, and a
   # snapd that is down now must not empty it. No file, nothing to write.
-  if [ -f "$(file)" ]; then write_state <<<"$STATE"; fi
+  # Re-read after the rewrite: the unit checks the file as written, and a
+  # hand edit's dropped attributes would otherwise change the hash.
+  if [ -f "$(file)" ]; then write_state <<<"$STATE"; load_state; fi
+  # A terminal apply with no --expect is pinned to what was just checked.
+  hash=$(state_hash)
+  # A finished run is kept by RemainAfterExit; clear it, as --detach does.
+  sub=$(unit_prop SubState)
+  case $sub in
+    "" | dead) ;;
+    *) systemctl --user stop "$UNIT" 2>/dev/null || true
+       systemctl --user reset-failed "$UNIT" 2>/dev/null || true ;;
+  esac
   jq -r '.changes[] | ({add: "+", remove: "−", change: "~"}[.op]) + " \(.store) \(.id)"
            + (if .detail == "" then "" else ": \(.detail)" end)' <<<"$pf"
   jq -r '.willRemove[] | "uninstallUnmanaged is on: this apply removes \(.)"' <<<"$pf"
-  # pkexec, because the panel has no tty for a sudo password; Omarchy's
-  # polkit agent asks on screen. Unless sudo needs no password at all: then
-  # nh's `passwordless` asks nothing the user has not already waived, and a
-  # polkit prompt would be the only thing standing between them and apply.
-  local elev=${NH_ELEVATION_STRATEGY:-}
-  if [ -z "$elev" ]; then
-    if sudo -n true 2>/dev/null; then elev=passwordless; else elev=pkexec; fi
-  fi
+  # The unit re-takes the lock; holding it here would only make it wait.
+  exec {STATE_LOCK}>&-; STATE_LOCK=
+  # The unit's properties are --detach's (nixarchy-apply:49-58): no
+  # NoNewPrivileges, since elevation goes through the setuid pkexec; no
+  # rate limit on a bursty build log; no --collect, which unloads a failed
+  # unit at once and then reads Result=success.
+  err=$(systemd-run --user --unit="$UNIT" \
+    -p RemainAfterExit=yes -p LogRateLimitIntervalSec=0 \
+    --setenv=PATH="$PATH" \
+    --setenv=XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" \
+    --setenv=XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}" \
+    --setenv=NIXARCHY_FLAKE="$(flake)" \
+    --setenv=NH_ELEVATION_STRATEGY="$(elevation)" \
+    --setenv=NO_COLOR=1 \
+    -- "$(readlink -f "$0")" apply --in-unit --expect "$hash" 2>&1) ||
+    die3 "could not start the rebuild: ${err:-systemd-run failed}"
+  id=$(unit_prop InvocationID)
+  echo "Rebuilding in the background. Follow it with: nixarchy-flatsnap apply-log --follow" >&2
+  jq -nc --arg id "$id" '{nixarchyFlatsnapStarted: {invocationId: $id}}'
+}
+
+# The unit's own run: the checks again, under a lock held to the end, then
+# nixarchy-apply in the foreground. Its output is the unit's journal, and
+# its exit code the unit's ExecMainStatus.
+apply_in_unit() {
+  local expect=$1 m tmp statuses rc filt
+  [ -n "$expect" ] || die "apply --in-unit needs --expect"
+  [[ ${INVOCATION_ID:-} =~ ^[0-9a-f]{32}$ ]] || die "apply --in-unit runs only in a systemd unit"
+  # Written by the run itself, so a launcher killed after systemd-run
+  # still leaves the panel able to tell this run is its own.
+  m=$(marker); mkdir -p "$(dirname "$m")"
+  tmp=$(mktemp "$m.XXXXXX"); printf '%s new\n' "$INVOCATION_ID" >"$tmp"; mv "$tmp" "$m"
+  load_state
+  check_entries
+  [ "$(state_hash)" = "$expect" ] || die "the declared set changed since you confirmed; press a again"
+  if [ -f "$(file)" ]; then write_state <<<"$STATE"; fi
   set +e +o pipefail
   # The lock stays with this process, not with nixarchy-apply's children.
   # The filter indents any build line that starts like one of our records,
-  # so only the jq below can end the apply for the panel.
-  NO_COLOR=1 NH_ELEVATION_STRATEGY="$elev" \
+  # so a terminal reader of the journal cannot be fooled by the build.
+  NO_COLOR=1 NH_ELEVATION_STRATEGY="$(elevation)" \
     nixarchy-apply --yes --no-preview </dev/null 2>&1 {STATE_LOCK}>&- |
     awk '{ gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\033[()][A-Za-z0-9]/, "")
            sub(/.*\r/, "")
@@ -641,6 +710,54 @@ cmd_apply() {
       ok: ($rc == 0 and $filt == 0), exit: $rc,
       message: (if $filt != 0 then "the log filter failed (exit \($filt)); nixarchy-apply exited \($rc)"
                 elif $rc == 0 then "applied" else "nixarchy-apply exited \($rc)" end)}}'
+  [ "$rc" -ne 0 ] || rc=$filt
+  exit "$rc"
+}
+
+# The rebuild unit's state, as one JSON line. `none` is read from SubState
+# and InvocationID, never from Result: a unit that never ran reads
+# Result=success ExecMainStatus=0. `ours`: the marker names this run.
+# --ack <id> records that the panel has shown that run's result, the one
+# write here, and only to the marker.
+cmd_apply_status() {
+  local ack="" props sub res code id m mid mst=""
+  case ${1:-} in
+    "") ;;
+    --ack) [[ ${2:-} =~ ^[0-9a-f]{32}$ ]] || die "--ack needs an invocation ID"; ack=$2 ;;
+    *) die "usage: nixarchy-flatsnap apply-status [--ack <invocationId>]" ;;
+  esac
+  m=$(marker)
+  read -r mid mst 2>/dev/null <"$m" || mid=""
+  if [ -n "$ack" ] && [ "$mid" = "$ack" ]; then
+    local tmp; tmp=$(mktemp "$m.XXXXXX"); printf '%s shown\n' "$ack" >"$tmp"; mv "$tmp" "$m"; mst=shown
+  fi
+  props=$(systemctl --user show -p SubState,Result,ExecMainStatus,InvocationID "$UNIT" 2>/dev/null || true)
+  sub=$(sed -n 's/^SubState=//p' <<<"$props"); res=$(sed -n 's/^Result=//p' <<<"$props")
+  code=$(sed -n 's/^ExecMainStatus=//p' <<<"$props"); id=$(sed -n 's/^InvocationID=//p' <<<"$props")
+  jq -nc --arg sub "$sub" --arg res "$res" --arg code "$code" --arg id "$id" --arg mid "$mid" --arg mst "$mst" '
+    {state: (if $id == "" or $sub == "" or $sub == "dead" then "none"
+             elif $sub == "running" or ($sub | startswith("start")) then "running"
+             elif $sub == "exited" and $res == "success" then "succeeded"
+             else "failed" end),
+     result: $res, exit: (($code | tonumber?) // 0), invocationId: $id,
+     ours: ($id != "" and $mid == $id), shown: ($id != "" and $mid == $id and $mst == "shown")}'
+}
+
+# One run's log from the journal, from its start: the invocation ID keeps an
+# earlier run's lines out. --follow keeps reading until killed.
+cmd_apply_log() {
+  local id="" follow=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --follow) follow=(-f) ;;
+      *) [[ $1 =~ ^[0-9a-f]{32}$ ]] || die "usage: nixarchy-flatsnap apply-log [<invocationId>] [--follow]"
+         id=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$id" ] || id=$(unit_prop InvocationID)
+  [ -n "$id" ] || die "no rebuild to show"
+  journalctl --user -u "$UNIT" --invocation="$id" -o cat --no-pager -n 2000 "${follow[@]}"
 }
 
 main() {
@@ -653,7 +770,9 @@ main() {
     rm) cmd_rm "$@" ;;
     preflight) cmd_preflight ;;
     apply) cmd_apply "$@" ;;
-    *) die "usage: nixarchy-flatsnap resolve|search|list|add|rm|preflight|apply ..." ;;
+    apply-status) cmd_apply_status "$@" ;;
+    apply-log) cmd_apply_log "$@" ;;
+    *) die "usage: nixarchy-flatsnap resolve|search|list|add|rm|preflight|apply|apply-status|apply-log ..." ;;
   esac
 }
 

@@ -358,7 +358,7 @@ unit dead success 0 ""
 : >"$JOURNAL_FIXTURE"
 # Hermetic: a developer's own shell may export these (nixarchy sets
 # NIXARCHY_FLAKE), and they would silently decide the tests below.
-unset NIXARCHY_FLAKE NH_ELEVATION_STRATEGY
+unset NIXARCHY_FLAKE NH_ELEVATION_STRATEGY INVOCATION_ID
 # The file nixarchy-apply copies, with no override: the CLI and the stub agree.
 export XDG_CONFIG_HOME="$work/config"; unset NIXARCHY_FLATSNAP_FILE
 # Nothing below may reach the real nixarchy-apply: only the stubs and these
@@ -366,7 +366,7 @@ export XDG_CONFIG_HOME="$work/config"; unset NIXARCHY_FLATSNAP_FILE
 # shellcheck source=tests/isolate.sh disable=SC1091
 . "$here/isolate.sh"
 P=$(isolated_path "$ab" "$work/tools" bash jq nix-instantiate awk sed grep sha256sum cut \
-  mktemp cat cp mv rm mkdir dirname uname tr head flock sort readlink) || { echo "ABORT: could not build the test PATH" >&2; exit 1; }
+  mktemp cat cp mv rm mkdir dirname uname tr head flock sort readlink env) || { echo "ABORT: could not build the test PATH" >&2; exit 1; }
 assert_isolated "$P" "$ab"
 pa() { env PATH="$P" bash "$cli" "$@"; }
 
@@ -450,7 +450,7 @@ refused "bad entry" 'test("Bad_Name")'
 printf '{ programs.nixarchy.flatsnap = { flatpaks = [ { appId = "org.a.B"; extra = "x"; } ]; }; }\n' >"$fsn"
 rm -f "$COPIED"; out=$(pa apply); rc=$?
 [ $rc -eq 0 ] && cmp -s "$COPIED" "$fsn" && grep -q 'appId = "org.a.B"' "$COPIED" && ! grep -q extra "$COPIED" &&
-  ok || bad "regenerate before copy: rc=$rc copied=$(cat "$COPIED" 2>&1) -> $out"
+  ok || bad "regenerate before copy: rc=$rc copied=$(cat "$COPIED" 2>&1) -> $out journal=$(cat "$JOURNAL")"
 # 4: apply does not prune pendingRemoval, even when snap lists nothing.
 printf '{ programs.nixarchy.flatsnap = { pendingRemoval = [ "x" ]; }; }\n' >"$fsn"
 stub snap 'printf "Name Version\\n"'
@@ -493,6 +493,7 @@ out=$(pa apply); rc=$?; j=$(cat "$JOURNAL")
 # ---- #23: apply runs in the nixarchy-rebuild unit ------------------------
 id=0123456789abcdef0123456789abcdef
 stub nixarchy-apply '# copies apps services advanced flatsnap
+flake="${NIXARCHY_FLAKE:-/srv/their-flake}"
 echo invoked >>"$APPLY_LOG"
 f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
 echo "elevation=$NH_ELEVATION_STRATEGY no_color=${NO_COLOR:-}" >"$ELEV_LOG"

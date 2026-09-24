@@ -317,6 +317,24 @@ PARR PLAN phase cites the step number.
     Search for a duplicate first, and link it from #23.
     → verify by: the issue URL is recorded here.
 
+## Deviations during implementation
+
+- **Step 4, launcher order.** The `running` check comes before preflight,
+  not after the regenerate. A running build holds the state lock until it
+  ends, so preflight would wait 30 s on it and then fail with a lock
+  message instead of "already running". A finished unit is still stopped
+  and reset only after every check has passed, just before the start. The
+  change lines are printed after the unit check, so a refusal is one line.
+- **Step 4, the pinned hash.** After the regenerate, the launcher re-reads
+  the file and hashes that. A hand edit's dropped attributes (#10 case 3)
+  would otherwise give a hash the unit's re-read can never match.
+- **Step 4, the terminal hint** ("Rebuilding in the background…") goes to
+  stderr. The panel's stdout stays records and change lines only.
+- **Step 3/4, tests.** `env` joins the isolated tools list in
+  `tests/cli.sh` (the systemd-run stub runs the unit's command through
+  it). `INVOCATION_ID` is unset with the other hermetic variables, because
+  a test run from inside a systemd unit inherits one.
+
 ## Tests
 
 Nothing here reaches the real `nixarchy-apply`, `systemd-run`, `systemctl`,
