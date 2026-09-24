@@ -290,18 +290,24 @@ render() {
     "}"'
 }
 
+# JSON state in, JSON state out. A pending removal that snap no longer lists
+# is done: drop it, so the next apply can turn snapd off. Only on a real
+# answer: with snap absent, or present but not answering (snapd down), keep
+# them all. add and rm do this; apply does not, so a snapd that is down at
+# apply time cannot empty the list.
+prune_pending() {
+  local st sn; st=$(cat)
+  if sn=$(installed_ids snap) && [ "$sn" != null ]; then
+    st=$(jq -c --argjson i "$sn" '.pendingRemoval |= map(select(. as $n | $i | index($n) != null))' <<<"$st")
+  fi
+  printf '%s\n' "$st"
+}
+
 # Write aside, parse-check, rename: $f is only ever replaced by an atomic mv
 # of a file that parsed, so a failure leaves it exactly as it was.
 write_state() {
   local f tmp st; f=$(file)
   st=$(cat)
-  # A pending removal that snap no longer lists is done: drop it, so the
-  # next apply can turn snapd off. Only on a real answer: with snap absent,
-  # or present but not answering (snapd down), keep them all.
-  local sn
-  if sn=$(installed_ids snap) && [ "$sn" != null ]; then
-    st=$(jq -c --argjson i "$sn" '.pendingRemoval |= map(select(. as $n | $i | index($n) != null))' <<<"$st")
-  fi
   mkdir -p "$(dirname "$f")"
   tmp=$(mktemp "$f.XXXXXX")
   render <<<"$st" >"$tmp"
@@ -399,6 +405,7 @@ cmd_add() {
       ;;
     *) die "usage: nixarchy-flatsnap add flatpak|snap <id> ..." ;;
   esac
+  st=$(prune_pending <<<"$st")
   write_state <<<"$st"
   cmd_list
 }
@@ -415,6 +422,7 @@ cmd_rm() {
     *) die "store must be flatpak or snap" ;;
   esac
   [ -n "$st" ] || die "$2 is not declared"
+  st=$(prune_pending <<<"$st")
   write_state <<<"$st"
   cmd_list
 }
