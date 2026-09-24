@@ -19,10 +19,12 @@ touch "$managed"
 
 snap wait system seed.loaded
 
-# name -> tracking channel, e.g. "hello-world latest/stable"
-installed=$(snap list --unicode=never --color=never 2>/dev/null | awk 'NR > 1 { print $1, $4 }')
+# name, tracking channel, notes, e.g. "node 24/stable classic"
+installed=$(snap list --unicode=never --color=never 2>/dev/null | awk 'NR > 1 { print $1, $4, $6 }')
 is_installed() { awk -v n="$1" '$1 == n { f = 1 } END { exit !f }' <<<"$installed"; }
 tracking() { awk -v n="$1" '$1 == n { print $2 }' <<<"$installed"; }
+# Notes is a comma list: "classic", "disabled,classic", "-".
+is_classic() { awk -v n="$1" '$1 == n && ("," $3 ",") ~ /,classic,/ { f = 1 } END { exit !f }' <<<"$installed"; }
 is_managed() { grep -qxF "$1" "$managed"; }
 
 failed=0
@@ -37,6 +39,13 @@ while IFS=$'\t' read -r name channel classic; do
     else
       failed=1
     fi
+  elif [ "$classic" = false ] && is_classic "$name"; then
+    # The one mismatch snap cannot close: it has no in-place switch from
+    # classic to strict, and a reinstall would purge the snap's data. (The
+    # other way round is fine: snapd ignores --classic for a strict snap.)
+    echo "$name is installed with classic confinement but declared strict; snap cannot switch in place." \
+      "Remove it from the menu, apply, then add it again." >&2
+    failed=1
   elif [ "$(tracking "$name")" != "latest/$channel" ] && [ "$(tracking "$name")" != "$channel" ]; then
     echo "refresh $name -> $channel"
     snap refresh "$name" --channel="$channel" "${flag[@]}" || failed=1

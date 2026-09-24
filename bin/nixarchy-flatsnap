@@ -307,6 +307,14 @@ installed_ids() {
   jq -Rsc 'split("\n") | map(select(. != ""))' <<<"$out"
 }
 
+# true/false: is this installed snap classic? Empty when it is not installed
+# or snap cannot be asked; then the reconciler is the backstop.
+snap_classic() {
+  command -v snap >/dev/null || return 0
+  snap list --unicode=never --color=never "$1" 2>/dev/null |
+    awk 'NR == 2 { print (("," $6 ",") ~ /,classic,/) ? "true" : "false" }' || true
+}
+
 installed() {
   # null, not false, when the tool is absent or not answering: "unknown" is
   # not "missing".
@@ -362,6 +370,9 @@ cmd_add() {
         esac
       done
       [[ $channel =~ $CHAN_RE ]] || die "channel must be stable, candidate, beta or edge"
+      if [ "$classic" = false ] && [ "$(snap_classic "$name")" = true ]; then
+        die "$name is installed with classic confinement; snap cannot make it strict in place. Remove it, apply, then add it again."
+      fi
       load_state
       st=$(jq -c --arg n "$name" --arg c "$channel" --argjson k "$classic" '
         .snaps = ([.snaps[] | select(.name != $n)] + [{name: $n, channel: $c, classic: $k}])

@@ -196,13 +196,20 @@ rec="$here/../bin/nixarchy-flatsnap-reconcile"
 db="$work/snapdb"; export db
 cat >"$work/fakebin/snap" <<'STUB'
 #!/bin/sh
-# name tracking lines in $db; every call logged.
+# "name tracking notes" lines in $db (notes: classic or empty); every call logged.
 echo "$*" >>"$db.log"
 case $1 in
   wait) ;;
-  list) echo "Name Version Rev Tracking Publisher Notes"; while read -r n t; do echo "$n 1.0 1 $t pub -"; done <"$db" ;;
-  install) ch=${3#--channel=}; [ "$2" = broken ] && exit 1; echo "$2 latest/$ch" >>"$db" ;;
-  refresh) ch=${3#--channel=}; sed -i "s|^$2 .*|$2 latest/$ch|" "$db" ;;
+  list)
+    shift; name=; for a; do case $a in -*) ;; *) name=$a ;; esac; done
+    [ -z "$name" ] || grep -q "^$name " "$db" || { echo "error: no matching snaps installed" >&2; exit 1; }
+    echo "Name Version Rev Tracking Publisher Notes"
+    while read -r n t no; do [ -z "$name" ] || [ "$n" = "$name" ] || continue; echo "$n 1.0 1 $t pub ${no:--}"; done <"$db" ;;
+  # snapd ignores --classic for a strict snap; hello-world is strict here.
+  install) ch=${3#--channel=}; [ "$2" = broken ] && exit 1
+    no=; [ "${4:-}" = --classic ] && [ "$2" != hello-world ] && no=classic
+    echo "$2 latest/$ch $no" >>"$db" ;;
+  refresh) ch=${3#--channel=}; sed -i "s|^$2 [^ ]*|$2 latest/$ch|" "$db" ;;
   remove) [ "$2" = --purge ] || exit 1; sed -i "/^$3 /d" "$db" ;;
 esac
 STUB
@@ -230,6 +237,25 @@ grep -q '^byhand ' "$db" && ok || bad "removed a hand-installed snap"
 # One failure: the rest still happen, and the exit code says so.
 reconcile '{"snaps":[{"name":"broken","channel":"stable","classic":false},{"name":"hello-world","channel":"stable","classic":false}]}' >/dev/null; rc=$?
 [ $rc -eq 1 ] && grep -q '^hello-world ' "$db" && ok || bad "partial failure: rc=$rc db=$(cat "$db")"
+
+# Declared strict, installed classic: snap cannot switch in place, so the
+# reconciler refuses loudly and leaves it alone; the rest still happen (#13 C2).
+printf 'code latest/stable classic\n' >"$db"
+reconcile '{"snaps":[{"name":"code","channel":"stable","classic":false},{"name":"hello-world","channel":"stable","classic":false}]}' >/dev/null 2>"$work/rec.err"; rc=$?
+[ $rc -eq 1 ] && grep -q 'code is installed with classic confinement but declared strict' "$work/rec.err" &&
+  ! grep -Eq '^(install|refresh|remove.*) .*code' "$db.log" && grep -q '^hello-world ' "$db" && ok ||
+  bad "classic->strict: rc=$rc err=$(cat "$work/rec.err") log=$(tr '\n' ';' <"$db.log")"
+# Declared classic on a strict snap is a normal steady state: no refusal, no refresh.
+reconcile '{"snaps":[{"name":"code","channel":"stable","classic":true},{"name":"hello-world","channel":"stable","classic":true}]}' >/dev/null 2>"$work/rec.err"; rc=$?
+[ $rc -eq 0 ] && ! grep -Eq '^(install|refresh)' "$db.log" && ok || bad "classic on strict: rc=$rc err=$(cat "$work/rec.err") log=$(tr '\n' ';' <"$db.log")"
+
+# The CLI refuses the same change up front, and leaves the file alone.
+rm -f "$NIXARCHY_FLATSNAP_FILE"
+PATH="$work/fakebin:$PATH" run add snap code --classic >/dev/null; cp "$NIXARCHY_FLATSNAP_FILE" "$work/before"
+out=$(PATH="$work/fakebin:$PATH" run add snap code); rc=$?
+[ $rc -eq 2 ] && jq -e '.error | test("classic confinement")' <<<"$out" >/dev/null && cmp -s "$work/before" "$NIXARCHY_FLATSNAP_FILE" && ok ||
+  bad "add strict over installed classic: rc=$rc $out"
+check "strict add of an installed strict snap" 'map(.id) | index("hello-world") != null' env PATH="$work/fakebin:$PATH" bash "$cli" add snap hello-world
 
 # ---- preflight / apply, with nix, nixarchy-apply and flatpak stubbed ------
 ab="$work/applybin"; mkdir -p "$ab"
