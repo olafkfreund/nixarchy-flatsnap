@@ -254,6 +254,21 @@ QtObject {
     return ""
   }
 
+  // One override from the front of the text. Same grammar as OV_SEC, OV_KEY
+  // and OV_VAL in bin/nixarchy-flatsnap; change both together. Keys and
+  // values have no spaces, so a space inside an override is in its section
+  // (Session Bus Policy), and a value ends at the next whitespace.
+  readonly property var _ovHead:
+    /^\s*([A-Za-z][A-Za-z ]{0,40}\.[A-Za-z0-9_.-]{1,100}=[A-Za-z0-9_.\/:~!@+=-]{1,200})(?=\s|$)/
+
+  // {ov: [override, ...], bad: "" or the text from the first part that does
+  // not parse}. Whole overrides left to right, not a split on whitespace.
+  function _splitOverrides(text) {
+    var s = String(text).trim(), ov = [], at = 0, m
+    while (at < s.length && (m = _ovHead.exec(s.slice(at)))) { ov.push(m[1]); at += m[0].length }
+    return { ov: ov, bad: s.slice(at).trim() }
+  }
+
   function remove() {
     var r = current
     if (tab !== 1 || !r || busy) return
