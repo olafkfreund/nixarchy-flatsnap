@@ -549,10 +549,38 @@ state_hash() { jq -cS . <<<"$STATE" | sha256sum | cut -c1-64; }
 # Copy the selection into the flake and rebuild -- through nixarchy-apply,
 # never around it. Streaming and the pkexec choice follow nixarchy-pkg's
 # cmd_apply; see the comment there for why each is the way it is.
+#
+# What gets built is what was checked: the file is re-read and re-checked
+# here, rewritten from that parse (so nothing outside our shape reaches the
+# copy), and with --expect it must still be the state preflight showed.
 cmd_apply() {
-  local pf statuses rc filt
-  pf=$(cmd_preflight)
+  local pf statuses rc filt expect="" want
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --expect)
+        [ $# -ge 2 ] && [[ $2 =~ ^[0-9a-f]{64}$ ]] || die "--expect needs the stateHash from preflight"
+        expect=$2; shift 2 ;;
+      *) die "usage: nixarchy-flatsnap apply [--expect <stateHash>]" ;;
+    esac
+  done
+  want="${XDG_CONFIG_HOME:-$HOME/.config}/nixarchy/flatsnap.nix"
+  [ "$(file)" = "$want" ] || die "NIXARCHY_FLATSNAP_FILE is not the file nixarchy-apply copies ($want)"
+  # Not a bare assignment: under set -e a failing $(...) would end the script
+  # here with nothing on stdout, and the panel would have no error to show.
+  pf=$(cmd_preflight) || { printf '%s\n' "$pf"; exit 2; }
   jq -e '.ok' <<<"$pf" >/dev/null || { jq -c '{error: .message}' <<<"$pf"; exit 2; }
+  # Locked from here until this process exits, i.e. through nixarchy-apply's
+  # copy and the build: an add or rm now waits, then says so.
+  load_state
+  check_entries
+  if [ -n "$expect" ] && [ "$(state_hash)" != "$expect" ]; then
+    die "the declared set changed since you confirmed; press a again"
+  fi
+  # Regenerate without pruning pendingRemoval: that is add/rm's job, and a
+  # snapd that is down now must not empty it. No file, nothing to write.
+  if [ -f "$(file)" ]; then write_state <<<"$STATE"; fi
+  jq -r '.changes[] | ({add: "+", remove: "−", change: "~"}[.op]) + " \(.store) \(.id)"
+           + (if .detail == "" then "" else ": \(.detail)" end)' <<<"$pf"
   jq -r '.willRemove[] | "uninstallUnmanaged is on: this apply removes \(.)"' <<<"$pf"
   # pkexec, because the panel has no tty for a sudo password; Omarchy's
   # polkit agent asks on screen. Unless sudo needs no password at all: then
@@ -563,10 +591,15 @@ cmd_apply() {
     if sudo -n true 2>/dev/null; then elev=passwordless; else elev=pkexec; fi
   fi
   set +e +o pipefail
+  # The lock stays with this process, not with nixarchy-apply's children.
+  # The filter indents any build line that starts like one of our records,
+  # so only the jq below can end the apply for the panel.
   NO_COLOR=1 NH_ELEVATION_STRATEGY="$elev" \
-    nixarchy-apply --yes --no-preview </dev/null 2>&1 |
+    nixarchy-apply --yes --no-preview </dev/null 2>&1 {STATE_LOCK}>&- |
     awk '{ gsub(/\033\[[0-9;?]*[A-Za-z]/, ""); gsub(/\033[()][A-Za-z0-9]/, "")
-           sub(/.*\r/, ""); print; fflush() }'
+           sub(/.*\r/, "")
+           if (index($0, "{\"nixarchyFlatsnapApply\"") == 1 || index($0, "{\"error\"") == 1) $0 = " " $0
+           print; fflush() }'
   statuses=("${PIPESTATUS[@]}")
   set -e -o pipefail
   rc=${statuses[0]}; filt=${statuses[1]}
@@ -586,7 +619,7 @@ main() {
     add) cmd_add "$@" ;;
     rm) cmd_rm "$@" ;;
     preflight) cmd_preflight ;;
-    apply) cmd_apply ;;
+    apply) cmd_apply "$@" ;;
     *) die "usage: nixarchy-flatsnap resolve|search|list|add|rm|preflight|apply ..." ;;
   esac
 }
