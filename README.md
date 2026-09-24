@@ -55,10 +55,15 @@ Flatpak or Snap ID grammar.
 | `p` | Flatpak overrides, e.g. `Context.filesystems=xdg-pictures:ro` (queuing with overrides takes a second `Enter`) |
 | `Tab` | switch between *Add* and *Declared* |
 | `d` then `y` | un-declare the selected app |
-| `a` | apply (runs `nixarchy-apply`; the build log streams into the panel) |
-| `Esc` | one step back; closes from the top |
+| `a` then `a` | apply: the first `a` checks `flatsnap.nix` and lists what changes since the last apply, the second runs `nixarchy-apply` with the build log streaming into the panel |
+| `l` | show the build log again (after `Esc`, or after closing and reopening the panel) |
+| `Esc` | one step back; closes from the top. During a build it hides the log and the build carries on |
 
-Nothing is installed until you press `a`.
+Nothing is installed until you press `a` twice. Apply builds only what this
+tool writes: a `flatsnap.nix` edited outside its shape, or with an entry
+`add` would refuse, is refused before anything is built. The file is then
+rewritten from what was checked, so anything else in it is dropped. Comments
+you added by hand are dropped too.
 
 ## Install
 
