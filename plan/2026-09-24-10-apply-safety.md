@@ -452,3 +452,53 @@ verify later". The follow-ups:
   merge. A search found no existing issue.
 - **Step 14.** Apply dies with the shell, so it should run through
   `nixarchy-apply --detach`: olafkfreund/nixarchy-flatsnap#23.
+
+## Live check, third attempt (#22, 2026-09-24): not completed
+
+The check stopped before the first `a` because of another outside shell
+restart. Nothing was verified that had not already passed. Check 1 (the
+apply half) and check 3 are still open in #22.
+
+- **Setup, as #22 describes it.**
+  - `/tmp/flake-22` on razer was a clone of nixos_config 20b655c24, the
+    source of razer's generation 2954. It had
+    `programs.nixarchy.flake = lib.mkForce "/tmp/flake-22"` and the
+    `nixarchy/nixarchy-flatsnap` input overridden to 7d2ff26 (main).
+  - Built on p620 (`85362iv5…`), nix-copied to razer, then
+    `switch-to-configuration test`. The plugin link moved to `vbsa9y6g…`,
+    and the baked-in `nixarchy-apply` named `/tmp/flake-22`.
+  - The shell was relaunched through `hyprctl dispatch` with
+    `NIXARCHY_FLAKE=/tmp/flake-22`, confirmed from
+    `/proc/<pid>/environ`.
+- **Setup gotchas.**
+  - A bare `quickshell kill` fails with "Could not find default config"
+    (it needs `-p`). Killing the pid works.
+  - `omarchy-shell shell toggle` over ssh says "omarchy-shell is not running"
+    unless the shell process's whole environment is imported (`OMARCHY_PATH`
+    lives only there).
+- **What happened.**
+  - The panel opened, and a lookup of `hello-world` ran.
+  - Keystrokes that were not ours landed in the field (a `js` prefix), and
+    the distrobox panel opened on its own.
+  - `~/.config/omarchy/plugins/nixarchy.distrobox/` had been rewritten as a
+    real directory at 19:27:19, after our claim (19:27:04). That points to an
+    unannounced distrobox test on razer.
+  - At 19:29:37.42 an ssh session that was not ours opened. At 19:29:37.82
+    `omarchy-shell[2088329]` logged `Exiting due to IPC request`, and
+    Hyprland exec'd a fresh `omarchy-launch-shell` with
+    `NIXARCHY_FLAKE=/etc/nixos`.
+  - Per the no-retry rule, the run stopped. At 19:31:20 the restored shell
+    was restarted from outside again.
+- **Restore.**
+  - `switch-to-configuration switch` of system-2954-link. No generation was
+    made, and razer is still on 2954.
+  - 0 failed units, system and user. The plugin link is back on
+    `ziwc8…`. `/tmp/flake-22` is removed. No `flatsnap.nix` was written, and
+    the panel's `flatsnap.nix.lock` was removed.
+- **What the next run needs.**
+  - The bus claim alone has now failed three times. The run needs razer
+    reserved by the user, with other agents' sessions stopped, not just
+    asked.
+  - Or it needs #23 (`nixarchy-apply --detach`), so that a shell restart no
+    longer kills the build. The during-build checks (Esc, `l`, reopen, `d`)
+    would still need the shell to stay up.
