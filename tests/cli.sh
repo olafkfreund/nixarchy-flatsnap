@@ -56,6 +56,18 @@ expect 'snap install code'                                      '.confinements =
 expect 'https://snapcraft.io/hello-world'                       '(.confinements | keys) == (.channels) and ([.confinements[]] | unique) == ["strict"]'
 expect '  org.gnome.Calculator  '                               '.store=="flatpak"'
 expect 'hello-world'                                            '.store=="snap" and .id=="hello-world"'
+# No channel named: offer the first one the snap publishes, and its
+# confinement (fixture: beta strict, edge classic, no stable) (#13 C5).
+expect 'https://snapcraft.io/no-stable'                         '.channel=="beta" and .confinement=="strict" and .classic==false'
+expect 'snap install no-stable --edge'                          '.channel=="edge" and .classic==true'
+expect 'snap install hello-world --channel=beta'                '.channel=="beta"'
+# A default track other than latest: snap installs a bare risk from THAT
+# track (razer: node --channel=stable -> 24/stable), so describe it (#13 C6).
+expect 'https://snapcraft.io/trackdemo'                         '.channels==["stable"] and .channel=="stable" and .confinement=="classic" and .classic==true'
+# A channel named but not published is refused up front, not at apply.
+out=$(bash "$cli" resolve 'snap install no-stable --channel=stable'); rc=$?
+[ $rc -eq 2 ] && jq -e '.error | test("does not publish stable") and test("beta") and test("edge")' <<<"$out" >/dev/null && ok ||
+  bad "unpublished channel accepted (rc=$rc): $out"
 
 # ---- hostile and out-of-scope input: refused, never looked up -----------
 # The single quotes are the point: these must reach the CLI unexpanded.
@@ -63,6 +75,9 @@ expect 'hello-world'                                            '.store=="snap" 
 {
 refuse_early '$(id)'
 refuse_early '"; rm -rf ~'
+# Only the install verb itself, and Flatpak IDs within D-Bus's 255 (#13 C9).
+refuse_early 'flatpak installx org.gnome.Calculator'
+refuse_early "org.example.$(printf 'A%.0s' $(seq 244))"
 refuse_early '${x}'
 refuse_early 'org.gnome.${x}.App'
 refuse_early 'http://flathub.org/apps/a.b.c'
@@ -125,10 +140,27 @@ for a in 'flatpak org.x.${y}' 'snap Bad_Name' 'snap ok --channel latest/stable' 
   out=$(run add $a); [ $? -eq 2 ] && ok || bad "add $a accepted: $out"
 done
 
+# Concurrent writers: every add that exits 0 is in the file (#13 C1).
+rm -f "$NIXARCHY_FLATSNAP_FILE"
+for i in $(seq 1 20); do run add flatpak "org.test.App$i" >/dev/null 2>&1 & done
+rcs=0; for j in $(jobs -p); do wait "$j" || rcs=$((rcs + 1)); done
+check "20 concurrent adds, 20 entries" 'length == 20' run list
+[ "$rcs" -eq 0 ] && ok || bad "$rcs concurrent adds failed"
+rm -f "$NIXARCHY_FLATSNAP_FILE"
+
 # A hand edit that keeps the shape survives the next write.
 run add snap hello-world >/dev/null
 sed -i 's|    flatpaks = \[|    flatpaks = [\n      { appId = "org.hand.Edited"; }|' "$NIXARCHY_FLATSNAP_FILE"
 check "hand edit kept" 'map(.id) == ["org.hand.Edited","hello-world","code"]' run add snap code
+# A backslash in a hand-edited value survives a rewrite as one backslash (#13 C7).
+printf '{ programs.nixarchy.flatsnap = { flatpaks = [ { appId = "org.hand.Bs"; overrides = { Environment = { X = "a\\\\b"; }; }; } ]; snaps = [ ]; }; }\n' >"$NIXARCHY_FLATSNAP_FILE"
+run add snap code >/dev/null
+check "backslash round trip" '(.[] | select(.id=="org.hand.Bs") | .overrides.Environment.X) == "a\\b"' run add snap code
+run rm flatpak org.hand.Bs >/dev/null
+out=$(run add flatpak "org.example.$(printf 'A%.0s' $(seq 244))"); [ $? -eq 2 ] && ok || bad "256-character Flatpak ID accepted: $out"
+check "255-character Flatpak ID" 'length > 0' run add flatpak "org.example.$(printf 'A%.0s' $(seq 243))"
+run rm flatpak "org.example.$(printf 'A%.0s' $(seq 243))" >/dev/null
+
 # One that breaks the shape is refused, and the file is not touched.
 for foreign in '{ config, ... }: { }' '{ services.foo.enable = true; programs.nixarchy.flatsnap.snaps = [ ]; }'; do
   printf '%s\n' "$foreign" >"$NIXARCHY_FLATSNAP_FILE"
@@ -136,12 +168,18 @@ for foreign in '{ config, ... }: { }' '{ services.foo.enable = true; programs.ni
   [ $rc -eq 2 ] && [ "$(cat "$NIXARCHY_FLATSNAP_FILE")" = "$foreign" ] && ok || bad "foreign shape overwritten (rc=$rc): $out"
 done
 
-# A generated file that fails to parse restores the backup.
+# A generated file that fails to parse leaves the old one in place.
 run rm flatpak org.hand.Edited >/dev/null 2>&1; rm -f "$NIXARCHY_FLATSNAP_FILE"
 run add snap hello-world >/dev/null; cp "$NIXARCHY_FLATSNAP_FILE" "$work/before"
 mkdir "$work/fakebin"; printf '#!/bin/sh\ncase "$1" in --parse) exit 1;; esac\nexec %s "$@"\n' "$(command -v nix-instantiate)" >"$work/fakebin/nix-instantiate"; chmod +x "$work/fakebin/nix-instantiate"
 out=$(PATH="$work/fakebin:$PATH" run add snap code); rc=$?
 [ $rc -eq 2 ] && cmp -s "$work/before" "$NIXARCHY_FLATSNAP_FILE" && [ -z "$(find "$work" -name 'flatsnap.nix.??????')" ] && ok || bad "parse failure did not restore (rc=$rc): $out"
+[ -z "$(find "$work" -name '*.bak')" ] && ok || bad "a .bak was written"
+# No stale state comes back: an old .bak beside a deleted file stays unused (#13 C4).
+mv "$NIXARCHY_FLATSNAP_FILE" "$NIXARCHY_FLATSNAP_FILE.bak"
+out=$(PATH="$work/fakebin:$PATH" run add snap code); rc=$?
+[ $rc -eq 2 ] && [ ! -e "$NIXARCHY_FLATSNAP_FILE" ] && ok || bad "stale .bak restored (rc=$rc): $out"
+mv "$NIXARCHY_FLATSNAP_FILE.bak" "$NIXARCHY_FLATSNAP_FILE"
 
 # installed: stub flatpak/snap on PATH.
 printf '#!/bin/sh\necho org.gnome.Calculator\n' >"$work/fakebin/flatpak"
@@ -169,18 +207,33 @@ printf '#!/bin/sh\nprintf "Name Version\\n"\n' >"$work/fakebin/snap"
 PATH="$work/fakebin:$PATH" run rm flatpak org.gnome.Calculator >/dev/null
 grep -q pendingRemoval "$NIXARCHY_FLATSNAP_FILE" && bad "not pruned once gone" || ok
 
+# snap present but not answering (snapd down): unknown, not "none installed" (#13 C3, C8).
+rm -f "$NIXARCHY_FLATSNAP_FILE"
+run add snap hello-world >/dev/null; run rm snap hello-world >/dev/null; run add snap code >/dev/null
+printf '#!/bin/sh\necho "error: cannot communicate with server" >&2\nexit 1\n' >"$work/fakebin/snap"
+PATH="$work/fakebin:$PATH" run add flatpak org.gnome.Calculator >/dev/null
+grep -q 'pendingRemoval = \[ "hello-world" \];' "$NIXARCHY_FLATSNAP_FILE" && ok || bad "pruned on a failing snap: $(cat "$NIXARCHY_FLATSNAP_FILE")"
+check "failing snap is unknown" '(.[] | select(.id=="code") | .installed) == null' env PATH="$work/fakebin:$PATH" bash "$cli" list
+
 # ---- the reconciler, against a stub snap with state ----------------------
 rec="$here/../bin/nixarchy-flatsnap-reconcile"
 db="$work/snapdb"; export db
 cat >"$work/fakebin/snap" <<'STUB'
 #!/bin/sh
-# name tracking lines in $db; every call logged.
+# "name tracking notes" lines in $db (notes: classic or empty); every call logged.
 echo "$*" >>"$db.log"
 case $1 in
   wait) ;;
-  list) echo "Name Version Rev Tracking Publisher Notes"; while read -r n t; do echo "$n 1.0 1 $t pub -"; done <"$db" ;;
-  install) ch=${3#--channel=}; [ "$2" = broken ] && exit 1; echo "$2 latest/$ch" >>"$db" ;;
-  refresh) ch=${3#--channel=}; sed -i "s|^$2 .*|$2 latest/$ch|" "$db" ;;
+  list)
+    shift; name=; for a; do case $a in -*) ;; *) name=$a ;; esac; done
+    [ -z "$name" ] || grep -q "^$name " "$db" || { echo "error: no matching snaps installed" >&2; exit 1; }
+    echo "Name Version Rev Tracking Publisher Notes"
+    while read -r n t no; do [ -z "$name" ] || [ "$n" = "$name" ] || continue; echo "$n 1.0 1 $t pub ${no:--}"; done <"$db" ;;
+  # snapd ignores --classic for a strict snap; hello-world is strict here.
+  install) ch=${3#--channel=}; [ "$2" = broken ] && exit 1
+    no=; [ "${4:-}" = --classic ] && [ "$2" != hello-world ] && no=classic
+    echo "$2 latest/$ch $no" >>"$db" ;;
+  refresh) ch=${3#--channel=}; sed -i "s|^$2 [^ ]*|$2 latest/$ch|" "$db" ;;
   remove) [ "$2" = --purge ] || exit 1; sed -i "/^$3 /d" "$db" ;;
 esac
 STUB
@@ -208,6 +261,32 @@ grep -q '^byhand ' "$db" && ok || bad "removed a hand-installed snap"
 # One failure: the rest still happen, and the exit code says so.
 reconcile '{"snaps":[{"name":"broken","channel":"stable","classic":false},{"name":"hello-world","channel":"stable","classic":false}]}' >/dev/null; rc=$?
 [ $rc -eq 1 ] && grep -q '^hello-world ' "$db" && ok || bad "partial failure: rc=$rc db=$(cat "$db")"
+
+# A snap on a non-latest default track is not refreshed on every run (#13 C6).
+printf 'node 24/stable classic\n' >"$db"
+reconcile '{"snaps":[{"name":"node","channel":"stable","classic":true}]}' >/dev/null; rc=$?
+[ $rc -eq 0 ] && ! grep -q '^refresh' "$db.log" && ok || bad "non-latest track refreshed: rc=$rc log=$(tr '\n' ';' <"$db.log")"
+reconcile '{"snaps":[{"name":"node","channel":"edge","classic":true}]}' >/dev/null
+grep -qx 'refresh node --channel=edge --classic' "$db.log" && ok || bad "real channel change not refreshed: $(tr '\n' ';' <"$db.log")"
+
+# Declared strict, installed classic: snap cannot switch in place, so the
+# reconciler refuses loudly and leaves it alone; the rest still happen (#13 C2).
+printf 'code latest/stable classic\n' >"$db"
+reconcile '{"snaps":[{"name":"code","channel":"stable","classic":false},{"name":"hello-world","channel":"stable","classic":false}]}' >/dev/null 2>"$work/rec.err"; rc=$?
+[ $rc -eq 1 ] && grep -q 'code is installed with classic confinement but declared strict' "$work/rec.err" &&
+  ! grep -Eq '^(install|refresh|remove.*) .*code' "$db.log" && grep -q '^hello-world ' "$db" && ok ||
+  bad "classic->strict: rc=$rc err=$(cat "$work/rec.err") log=$(tr '\n' ';' <"$db.log")"
+# Declared classic on a strict snap is a normal steady state: no refusal, no refresh.
+reconcile '{"snaps":[{"name":"code","channel":"stable","classic":true},{"name":"hello-world","channel":"stable","classic":true}]}' >/dev/null 2>"$work/rec.err"; rc=$?
+[ $rc -eq 0 ] && ! grep -Eq '^(install|refresh)' "$db.log" && ok || bad "classic on strict: rc=$rc err=$(cat "$work/rec.err") log=$(tr '\n' ';' <"$db.log")"
+
+# The CLI refuses the same change up front, and leaves the file alone.
+rm -f "$NIXARCHY_FLATSNAP_FILE"
+PATH="$work/fakebin:$PATH" run add snap code --classic >/dev/null; cp "$NIXARCHY_FLATSNAP_FILE" "$work/before"
+out=$(PATH="$work/fakebin:$PATH" run add snap code); rc=$?
+[ $rc -eq 2 ] && jq -e '.error | test("classic confinement")' <<<"$out" >/dev/null && cmp -s "$work/before" "$NIXARCHY_FLATSNAP_FILE" && ok ||
+  bad "add strict over installed classic: rc=$rc $out"
+check "strict add of an installed strict snap" 'map(.id) | index("hello-world") != null' env PATH="$work/fakebin:$PATH" bash "$cli" add snap hello-world
 
 # ---- preflight / apply, with nix, nixarchy-apply and flatpak stubbed ------
 ab="$work/applybin"; mkdir -p "$ab"
@@ -252,6 +331,12 @@ stub nixarchy-apply 'exit 0'
 out=$(pa preflight 2>"$work/err"); rc=$?
 [ $rc -eq 0 ] && jq -e '.ok' <<<"$out" >/dev/null && grep -q 'could not read the flake path' "$work/err" &&
   grep -q '^/etc/nixos#' "$NIX_LOG" && ok || bad "flake fallback: rc=$rc out=$out err=$(cat "$work/err") nix=$(cat "$NIX_LOG")"
+
+# A flatpak that fails: preflight cannot say what apply would remove, so it
+# refuses rather than report nothing (#13 C8).
+stub flatpak 'exit 1'
+out=$(pa preflight); rc=$?
+[ $rc -eq 2 ] && jq -e '.error | test("could not list installed Flatpaks")' <<<"$out" >/dev/null && ok || bad "preflight on failing flatpak: rc=$rc $out"
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

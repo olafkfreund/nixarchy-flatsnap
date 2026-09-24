@@ -16,6 +16,8 @@ spec: spec/2026-09-23-1-flatpak-snap-menu.md
   `/var/lib/nixarchy-flatsnap/managed`, never a snap installed by hand.
 - **The state file** is `~/.config/nixarchy/flatsnap.nix`. It is generated and owned
   by the CLI, regenerated whole, and guarded by backup → write → `nix-instantiate --parse` → restore.
+  *2026-09-24 (#13): the backup/restore step was removed; mktemp → parse → mv gives the same
+  guarantee. See spec/2026-09-24-13-state-reconcile.md D2.*
 - **Entry point:** the Omarchy menu row *Install → Flatpak & Snap* runs
   `nixarchy-plugin nixarchy.flatsnap` and is gated by `when = nixarchy-plugin --enabled nixarchy.flatsnap`.
   There is no new keybinding.

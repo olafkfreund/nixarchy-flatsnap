@@ -53,7 +53,7 @@
           # The same CLI on PATH, with its tools pinned, for a terminal.
           cli = pkgs.writeShellApplication {
             name = "nixarchy-flatsnap";
-            runtimeInputs = with pkgs; [ curl jq gawk coreutils gnused gnugrep nix ];
+            runtimeInputs = with pkgs; [ curl jq gawk coreutils gnused gnugrep nix util-linux ];
             text = builtins.readFile ./bin/nixarchy-flatsnap;
             meta = with pkgs.lib; {
               description = "Declare Flatpak and Snap apps for nixarchy from a terminal";
@@ -78,7 +78,7 @@
 
           # Offline: every API answer is a fixture in tests/fixtures.
           cli = pkgs.runCommand "nixarchy-flatsnap-cli"
-            { nativeBuildInputs = with pkgs; [ bash jq nix ]; }
+            { nativeBuildInputs = with pkgs; [ bash jq nix util-linux ]; }
             ''
               # nix-instantiate wants a writable state dir, and the sandbox has none.
               export HOME=$TMPDIR NIX_STATE_DIR=$TMPDIR/nix-state NIX_REMOTE=local?root=$TMPDIR/nix-root

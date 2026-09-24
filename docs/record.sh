@@ -203,7 +203,7 @@ cleanup() {
   [ ${#made[@]} -eq 0 ] || run sudo nix-env -p "$PROFILE" --delete-generations "${made[@]}"
   [ ${#kept[@]} -eq 0 ] || say "newer generations not made by this take were kept: ${kept[*]}"
   run sudo "$PROFILE/bin/switch-to-configuration" boot
-  run rm -f "$FS_FILE" "$FS_FILE.bak" "$HOME/.local/state/nixarchy/enabled-once/$PANEL"
+  run rm -f "$FS_FILE" "$HOME/.local/state/nixarchy/enabled-once/$PANEL"
   say "left on $(readlink "$PROFILE")"
   # The trap's own last command must not decide the exit code: a take that
   # died reports that it died.
