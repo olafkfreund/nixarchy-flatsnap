@@ -24,8 +24,10 @@ QtObject {
   property bool classicArmed: false   // first x arms, second x confirms
   property bool classicChosen: false  // x x on a channel the store publishes strict
   property string overrides: ""       // "Section.key=value ..." for Flatpaks
-  property bool overridesArmed: false // overrides widen a sandbox: Enter twice
-  onOverridesChanged: overridesArmed = false
+  // The next Enter queues: a classic snap or any override leaves or widens
+  // a sandbox, so the first Enter only says what it will do.
+  property bool queueArmed: false
+  onOverridesChanged: queueArmed = false
 
   property string pendingDelete: ""   // "store:id" waiting for y
   property var willRemove: []         // from preflight, when uninstallUnmanaged is on
@@ -121,6 +123,7 @@ QtObject {
     classicChosen = false
     classicArmed = false
     overrides = ""
+    queueArmed = false
     message = ""
   }
 
@@ -133,6 +136,7 @@ QtObject {
     var have = card.channels || []
     var all = have.length ? order.filter(function (c) { return have.indexOf(c) >= 0 }) : order
     if (all.length === 0) return
+    queueArmed = false
     channel = all[(all.indexOf(channel) + 1) % all.length]
     // Confinement is per channel. A classic channel forces --classic (snap
     // install refuses it otherwise); a strict one keeps only what x x chose.
@@ -148,9 +152,12 @@ QtObject {
   // off at all -- snap install refuses it without --classic.
   function toggleClassic() {
     if (!card || card.store !== "snap") return
+    queueArmed = false
     if (classic) {
       if (card.confinement === "classic") { message = "this snap is only published with classic confinement"; return }
-      classic = false; classicChosen = false; classicArmed = false; return
+      // message too: x does not pass through Menu's disarm, and an
+      // "Enter again: … WITHOUT a sandbox" from queue() is now untrue.
+      classic = false; classicChosen = false; classicArmed = false; message = ""; return
     }
     if (!classicArmed) { classicArmed = true; message = "x again: run this snap WITHOUT a sandbox"; return }
     classic = true; classicChosen = true; classicArmed = false; message = ""
@@ -180,22 +187,49 @@ QtObject {
     var args
     if (card.store === "snap") {
       args = ["add", "snap", card.id, "--channel", channel]
+      // Classic, whether the store or x x chose it: Enter twice, as overrides.
+      if (classic && !queueArmed) {
+        queueArmed = true
+        message = "Enter again: install " + card.id + " WITHOUT a sandbox (classic confinement)"
+        return
+      }
       if (classic) args.push("--classic")
     } else {
       args = ["add", "flatpak", card.id]
       var ov = overrides.trim().split(/\s+/).filter(function (s) { return s.length > 0 })
       // An override widens (or narrows) the sandbox, so it is confirmed the
-      // way classic confinement is: the first Enter says what it will do.
-      if (ov.length > 0 && !overridesArmed) {
-        overridesArmed = true
-        message = "Enter again: change " + card.id + "'s sandbox with " + ov.join("  ")
+      // way classic confinement is: the first Enter says what it will do,
+      // and names the ones on the CLI's escape list with what they grant.
+      if (ov.length > 0 && !queueArmed) {
+        queueArmed = true
+        var esc = ov.map(_escapes).filter(function (s) { return s !== "" })
+        message = esc.length > 0
+          ? "Enter again: " + card.id + " ESCAPES its sandbox — " + esc.join("; ")
+          : "Enter again: change " + card.id + "'s sandbox with " + ov.join("  ")
         return
       }
-      overridesArmed = false
       for (var i = 0; i < ov.length; i++) args.push("--override", ov[i])
     }
+    queueArmed = false
     _after = card.name + " queued — a applies"
     _run(_writer, args)
+  }
+
+  // "<override>: <what it grants>" when the card's sandboxEscapes (from the
+  // CLI) lists it, else "". A card without the list is an older CLI: every
+  // override counts, so losing the list warns more, never less.
+  function _escapes(o) {
+    var list = card ? card.sandboxEscapes : undefined
+    if (!Array.isArray(list)) return o + ": not checked (no list from nixarchy-flatsnap)"
+    var m = /^([A-Za-z][A-Za-z ]{0,40})\.([A-Za-z0-9_.-]{1,100})=(.+)$/.exec(o)
+    if (!m) return ""
+    var v = m[3].replace(/:(ro|rw|create)$/, "")
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i]
+      if (e.section === m[1] && (e.key === "*" || e.key === m[2]) && e.values.indexOf(v) >= 0)
+        return o + ": " + e.says
+    }
+    return ""
   }
 
   function remove() {
@@ -203,7 +237,14 @@ QtObject {
     if (tab !== 1 || !r || busy) return
     if (applying) { message = _rebuilding; return }
     var key = r.store + ":" + r.id
-    if (pendingDelete !== key) { pendingDelete = key; message = "y removes " + r.id + " at the next apply; any other key keeps it"; return }
+    // snap remove --purge (see the reconciler): the data goes with the snap.
+    if (pendingDelete !== key) {
+      pendingDelete = key
+      message = r.store === "snap"
+        ? "y removes " + r.id + " at the next apply and DELETES its data (no snapshot); any other key keeps it"
+        : "y removes " + r.id + " at the next apply; any other key keeps it"
+      return
+    }
     _after = r.id + " removed — a applies"
     _run(_writer, ["rm", r.store, r.id])
   }
@@ -255,7 +296,7 @@ QtObject {
     message = "checking…"   // after _run, which clears it
   }
 
-  function disarm() { applyArmed = false; classicArmed = false; overridesArmed = false; pendingDelete = "" }
+  function disarm() { applyArmed = false; classicArmed = false; queueArmed = false; pendingDelete = "" }
 
   function _startApply() {
     _applyDone = false

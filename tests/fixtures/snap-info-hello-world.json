@@ -5,7 +5,8 @@
     "summary": "The 'hello-world' of snaps",
     "license": "MIT",
     "publisher": {
-      "display-name": "Canonical"
+      "display-name": "Canonical",
+      "validation": "verified"
     }
   },
   "channel-map": [

@@ -21,6 +21,35 @@ OV_SEC='[A-Za-z][A-Za-z ]{0,40}'
 OV_KEY='[A-Za-z0-9_.-]{1,100}'
 OV_VAL='[A-Za-z0-9_./:~!@+=-]{1,200}'
 OV_RE="^($OV_SEC)\\.($OV_KEY)=($OV_VAL)\$"
+# Overrides that take an app out of its sandbox. The panel asks twice for
+# any override, and names these with what they grant (README, "Overrides").
+# A value matches when equal after dropping :ro / :rw / :create; key "*" is
+# any bus name. Not listed (features=devel, xdg-* dirs, ~/sub) is not less
+# guarded: it still gets the ordinary second Enter. Carried on every flatpak
+# card, so this stays the one place the list is written.
+ESCAPES_JSON='[
+  {"section":"Context","key":"filesystems","values":["host","host-os","host-etc"],"says":"the host filesystem"},
+  {"section":"Context","key":"filesystems","values":["home","~"],"says":"your whole home folder"},
+  {"section":"Context","key":"sockets","values":["session-bus"],"says":"the whole session bus, which can run commands outside the sandbox"},
+  {"section":"Context","key":"sockets","values":["system-bus"],"says":"the whole system bus"},
+  {"section":"Context","key":"sockets","values":["ssh-auth"],"says":"your SSH agent and its keys"},
+  {"section":"Context","key":"sockets","values":["gpg-agent"],"says":"your GPG agent and its keys"},
+  {"section":"Context","key":"devices","values":["all"],"says":"every device, including cameras and input"},
+  {"section":"Session Bus Policy","key":"org.freedesktop.Flatpak","values":["talk","own"],"says":"running commands outside the sandbox"},
+  {"section":"System Bus Policy","key":"*","values":["talk","own"],"says":"talking to system services"}
+]'
+# Flathub verification -> {verified, verifiedAs}. The card reads appstream's
+# metadata ("flathub::verification::"), search its hits ("verification_").
+# No key at all is null, "could not tell": never shown as unverified.
+# shellcheck disable=SC2016 # jq's $p and \(...), not the shell's
+FH_VERIFY_JQ='def fhverified($p):
+  if type != "object" or (has($p + "verified") | not) then {verified: null, verifiedAs: ""}
+  elif .[$p + "verified"] == true then {verified: true, verifiedAs: (.[$p + "website"]
+    // (if .[$p + "login_name"] then "\(.[$p + "login_name"]) (\(.[$p + "login_provider"] // "unknown"))" else "" end))}
+  else {verified: false, verifiedAs: ""} end;'
+# Snap Store publisher.validation: only "verified" is; "unproven" and
+# "starred" (a Canonical nod, not an identity check) are not; absent is null.
+SNAP_VERIFY_JQ='def snapverified: if type != "object" or .validation == null then null else .validation == "verified" end;'
 
 die() { jq -cn --arg e "$1" '{error: $e}'; exit 2; }
 
@@ -119,20 +148,22 @@ parse_install() {
 lookup_flatpak() {
   local s a
   a=$(fetch "flathub-appstream-$1.json" "https://flathub.org/api/v2/appstream/$1") || return 1
-  s=$(fetch "flathub-summary-$1.json" "https://flathub.org/api/v2/summary/$1") || s='{}'
-  jq -cn --arg id "$1" --argjson a "$a" --argjson s "$s" '{
+  # A failed summary is unknown permissions (null), not "none listed" ({}).
+  s=$(fetch "flathub-summary-$1.json" "https://flathub.org/api/v2/summary/$1") || s=null
+  jq -cn --arg id "$1" --argjson a "$a" --argjson s "$s" --argjson esc "$ESCAPES_JSON" "$FH_VERIFY_JQ"'{
     store: "flatpak", id: $id,
     name: ($a.name // $id), summary: ($a.summary // ""),
     publisher: ($a.developer_name // ""), license: ($a.project_license // ""),
-    permissions: ($s.metadata.permissions // {})
-  }'
+    permissions: (if $s == null then null else ($s.metadata.permissions // {}) end),
+    sandboxEscapes: $esc
+  } + ($a.metadata | fhverified("flathub::verification::"))'
 }
 
 lookup_snap() {
   local j out
   j=$(snap_api "snap-info-$1.json" "info/$1?fields=title,summary,publisher,license,confinement") || return 1
   out=$(jq -cn --arg id "$1" --arg ch "$channel" --argjson given "$channel_given" \
-    --argjson classic "$classic" --argjson j "$j" '
+    --argjson classic "$classic" --argjson j "$j" "$SNAP_VERIFY_JQ"'
     # The default track, not always latest: snap installs a bare risk from
     # it (node: --channel=stable is 24/stable), so that is what to describe.
     ($j."default-track" // "latest") as $track
@@ -152,6 +183,7 @@ lookup_snap() {
         store: "snap", id: $id,
         name: ($j.snap.title // $id), summary: ($j.snap.summary // ""),
         publisher: ($j.snap.publisher."display-name" // ""),
+        verified: ($j.snap.publisher | snapverified), verifiedAs: "",
         license: ($j.snap.license // ""),
         confinement: $conf,
         channels: ([$m[].channel.risk] | unique),
@@ -203,15 +235,16 @@ search_flathub() {
   body=$(jq -cn --arg q "$1" '{query: $q}')
   fetch "${2:-flathub-search.json}" https://flathub.org/api/v2/search \
     -X POST -H 'Content-Type: application/json' --data-binary "$body" |
-    jq -c '[.hits[:20][] | {store: "flatpak", id: .app_id, name, summary}]'
+    jq -c "$FH_VERIFY_JQ"'[.hits[:20][] | {store: "flatpak", id: .app_id, name, summary} + fhverified("verification_")]'
 }
 
 search_snap() {
   local q
   q=$(jq -rn --arg q "$1" '$q | @uri')
   snap_api snap-find.json "find?q=$q&fields=title,summary,publisher" |
-    jq -c '[.results[:20][] | {store: "snap", id: .name, name: (.snap.title // .name),
-            summary: (.snap.summary // ""), publisher: (.snap.publisher."display-name" // "")}]'
+    jq -c "$SNAP_VERIFY_JQ"'[.results[:20][] | {store: "snap", id: .name, name: (.snap.title // .name),
+            summary: (.snap.summary // ""), publisher: (.snap.publisher."display-name" // ""),
+            verified: (.snap.publisher | snapverified), verifiedAs: ""}]'
 }
 
 cmd_search() {

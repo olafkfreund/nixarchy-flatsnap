@@ -3,17 +3,50 @@
     {
       "app_id": "org.gnome.Calculator",
       "name": "Calculator",
-      "summary": "Perform arithmetic, scientific or financial calculations"
+      "summary": "Perform arithmetic, scientific or financial calculations",
+      "verification_verified": true,
+      "verification_method": "website",
+      "verification_login_name": null,
+      "verification_login_provider": null,
+      "verification_login_is_organization": false,
+      "verification_website": "gnome.org",
+      "verification_timestamp": "1713431760"
     },
     {
       "app_id": "org.kde.kalk",
       "name": "Calculator",
-      "summary": "A feature rich calculator"
+      "summary": "A feature rich calculator",
+      "verification_verified": true,
+      "verification_method": "login_provider",
+      "verification_login_name": "teams/flathub",
+      "verification_login_provider": "kde",
+      "verification_login_is_organization": true,
+      "verification_website": null,
+      "verification_timestamp": "1681471970"
     },
     {
       "app_id": "dev.edfloreshz.Calculator",
       "name": "Calculator",
-      "summary": "Beyond the equation"
+      "summary": "Beyond the equation",
+      "verification_verified": true,
+      "verification_method": "website",
+      "verification_login_name": null,
+      "verification_login_provider": null,
+      "verification_login_is_organization": false,
+      "verification_website": "edfloreshz.dev",
+      "verification_timestamp": "1728284451"
+    },
+    {
+      "app_id": "uno.platform.uno-calculator",
+      "name": "Uno Calculator",
+      "summary": "Linux port of the Microsoft Windows calculator app",
+      "verification_verified": false,
+      "verification_method": "none",
+      "verification_login_name": null,
+      "verification_login_provider": null,
+      "verification_login_is_organization": null,
+      "verification_website": null,
+      "verification_timestamp": null
     }
   ]
 }

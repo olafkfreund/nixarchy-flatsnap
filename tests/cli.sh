@@ -99,7 +99,29 @@ refuse 'no-such-snap'
 refuse 'org.example.DoesNotExist'
 }
 
-expect 'calculator' '.store=="ask" and (.candidates | length) == 3 and .candidates[0].id == "org.gnome.Calculator"'
+expect 'calculator' '.store=="ask" and (.candidates | length) == 4 and .candidates[0].id == "org.gnome.Calculator"'
+
+# ---- what the card says about trust (#12) ---------------------------------
+# verified: true / false / null (null = could not tell, never "unverified").
+expect 'org.gnome.Calculator'   '.verified == true and .verifiedAs == "gnome.org" and (.permissions | type) == "object"'
+expect 'com.spotify.Client'     '.verified == false and .verifiedAs == ""'
+expect 'org.example.NoMeta'     '.verified == null and (.permissions | type) == "object"'
+# A failed summary lookup is unknown permissions, not "none listed".
+expect 'org.example.NoSummary'  '.permissions == null and .verified == true'
+expect 'hello-world'            '.verified == true'
+expect 'calculator-linux'       '.verified == false and .publisher == "Shah Faishal Khan"'
+# The CLI owns the sandbox-escape list; every flatpak card carries it.
+has_escape() { printf 'any(.sandboxEscapes[]; .section == "%s" and .key == "%s" and (.values | index("%s")) != null)' "$1" "$2" "$3"; }
+expect 'org.gnome.Calculator' '(.sandboxEscapes | length) > 0 and all(.sandboxEscapes[]; (.says | length) > 0)'
+for e in 'Context filesystems host' 'Context filesystems host-os' 'Context filesystems host-etc' \
+         'Context filesystems home' 'Context filesystems ~' 'Context sockets session-bus' \
+         'Context sockets system-bus' 'Context sockets ssh-auth' 'Context sockets gpg-agent' \
+         'Context devices all' 'Session Bus Policy|org.freedesktop.Flatpak|talk' \
+         'Session Bus Policy|org.freedesktop.Flatpak|own' 'System Bus Policy|*|talk' 'System Bus Policy|*|own'; do
+  if [[ $e == *'|'* ]]; then IFS='|' read -r s k v <<<"$e"; else read -r s k v <<<"$e"; fi
+  expect 'org.gnome.Calculator' "$(has_escape "$s" "$k" "$v")"
+done
+expect 'org.gnome.Calculator' 'all(.sandboxEscapes[]; .key != "features")'
 
 # ---- search ---------------------------------------------------------------
 run() { bash "$cli" "$@"; }
@@ -110,8 +132,11 @@ check() { # check <description> <jq filter> <cmd...>
 }
 # fixtures/flathub-search.json is search_flathub's default fixture; it matches
 # flathub-search-calculator.json (resolve's, by ID) on purpose. Both are used.
-check "search flathub" '.[0] == {store:"flatpak",id:"org.gnome.Calculator",name:"Calculator",summary:.[0].summary}' run search flatpak calculator
+check "search flathub" '.[0] == {store:"flatpak",id:"org.gnome.Calculator",name:"Calculator",summary:.[0].summary,verified:true,verifiedAs:"gnome.org"}' run search flatpak calculator
 check "search snap"    'map(.id) == ["hello","hello-world","hello-pasman"]' run search snap hello
+# Every row says verified or not; a Flathub login verification names who.
+check "search flathub verified" 'all(has("verified")) and map(.verified) == [true,true,true,false] and .[1].verifiedAs == "teams/flathub (kde)"' run search flatpak calculator
+check "search snap verified"    'map(.verified) == [true,true,false]' run search snap hello
 out=$(run search snap "$(printf 'a\nb')"); [ $? -eq 2 ] && ok || bad "multi-line search accepted: $out"
 out=$(run search apt hello); [ $? -eq 2 ] && ok || bad "unknown store accepted: $out"
 

@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "permissions": {
+      "shared": [
+        "ipc",
+        "network"
+      ],
+      "sockets": [
+        "fallback-x11",
+        "wayland"
+      ],
+      "devices": [
+        "dri"
+      ]
+    }
+  }
+}

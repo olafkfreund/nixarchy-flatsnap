@@ -103,8 +103,8 @@ Item {
           // A pending confirmation is cancelled by any other real key.
           var enter = k === Qt.Key_Return || k === Qt.Key_Enter
           if (!modifier && k !== Qt.Key_Y && k !== Qt.Key_A && k !== Qt.Key_X
-              && !(enter && fs.overridesArmed)
-              && (fs.pendingDelete !== "" || fs.applyArmed || fs.classicArmed || fs.overridesArmed)) {
+              && !(enter && fs.queueArmed)
+              && (fs.pendingDelete !== "" || fs.applyArmed || fs.classicArmed || fs.queueArmed)) {
             fs.disarm(); fs.message = ""
           }
 
@@ -189,13 +189,27 @@ Item {
 
             Line { text: (cardCol.c.name || "") + "   (" + (cardCol.isSnap ? "Snap" : "Flatpak") + ": " + (cardCol.c.id || "") + ")"; font.pixelSize: Style.font.heading; width: parent.width }
             Line { text: cardCol.c.summary || ""; width: parent.width }
-            Line { text: "publisher: " + (cardCol.c.publisher || "unknown") + "    license: " + (cardCol.c.license || "unknown"); width: parent.width }
+            // Verified by the store, or not, or unknown (null or missing,
+            // e.g. an older CLI): only unknown is urgent. A label, never a gate.
+            Line {
+              width: parent.width
+              readonly property var v: cardCol.c.verified
+              color: v == null ? Color.urgent : Color.menu.text
+              text: "publisher: " + (cardCol.c.publisher || "unknown") + " — "
+                    + (v === true ? "verified" + (cardCol.c.verifiedAs ? " (" + cardCol.c.verifiedAs + ")" : "")
+                       : v === false ? "not verified by " + (cardCol.isSnap ? "the Snap Store" : "Flathub")
+                       : "verification UNKNOWN")
+            }
+            Line { text: "license: " + (cardCol.c.license || "unknown"); width: parent.width }
 
-            // Flatpak: what the sandbox lets it reach.
+            // Flatpak: what the sandbox lets it reach. null is a failed
+            // lookup: unknown, never "none listed".
             Line {
               visible: !cardCol.isSnap
               width: parent.width
+              color: cardCol.c.permissions === null ? Color.urgent : Color.menu.text
               text: {
+                if (cardCol.c.permissions === null) return "permissions: UNKNOWN (the Flathub lookup failed)"
                 var p = cardCol.c.permissions || {}
                 var out = []
                 for (var key in p) out.push(key + ": " + (Array.isArray(p[key]) ? p[key].join(", ") : JSON.stringify(p[key])))
@@ -264,9 +278,13 @@ Item {
                 var s = (d.store === "snap" ? "snap     " : "flatpak  ") + d.id
                 if (d.name && d.name !== d.id) s += "  — " + d.name
                 if (d.channel) s += "   [" + d.channel + (d.classic ? ", classic" : "") + "]"
+                // Search hits and candidates; unknown says nothing here, the card spells it out.
+                if (d.verified === true) s += "   verified"
+                else if (d.verified === false) s += "   unverified"
                 if (d.installed === true) s += "   installed"
                 else if (d.installed === false) s += "   not installed yet"
-                if (fs.pendingDelete === d.store + ":" + d.id) s += "   ← y to remove"
+                if (fs.pendingDelete === d.store + ":" + d.id)
+                  s += d.store === "snap" ? "   ← y removes it and its data" : "   ← y to remove"
                 return s
               }
             }
@@ -299,7 +317,7 @@ Item {
             width: parent.width
             visible: fs.message.length > 0
             text: fs.message
-            color: (fs.applyArmed || fs.classicArmed || fs.overridesArmed || fs.pendingDelete !== "") ? Color.urgent : Color.menu.text
+            color: (fs.applyArmed || fs.classicArmed || fs.queueArmed || fs.pendingDelete !== "") ? Color.urgent : Color.menu.text
           }
           Line {
             width: parent.width

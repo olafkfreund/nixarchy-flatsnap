@@ -5,7 +5,8 @@
     "summary": "Code editing. Redefined.",
     "license": "Proprietary",
     "publisher": {
-      "display-name": "Visual Studio Code"
+      "display-name": "Visual Studio Code",
+      "validation": "verified"
     }
   },
   "channel-map": [

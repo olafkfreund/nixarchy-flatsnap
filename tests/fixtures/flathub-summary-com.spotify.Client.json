@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "permissions": {
+      "devices": [
+        "dri"
+      ],
+      "sockets": [
+        "fallback-x11",
+        "pulseaudio",
+        "wayland"
+      ],
+      "filesystems": [
+        "xdg-run/pipewire-0:ro",
+        "xdg-pictures:ro",
+        "xdg-music:ro"
+      ],
+      "shared": [
+        "ipc",
+        "network"
+      ],
+      "session-bus": {
+        "talk": [
+          "org.kde.StatusNotifierWatcher",
+          "org.freedesktop.ScreenSaver",
+          "org.gnome.SettingsDaemon.MediaKeys"
+        ],
+        "own": [
+          "org.mpris.MediaPlayer2.spotify"
+        ]
+      }
+    }
+  }
+}
