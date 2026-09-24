@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 13
 spec: spec/2026-09-24-13-state-reconcile.md
 ---
