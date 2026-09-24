@@ -6,8 +6,10 @@ spec: spec/2026-09-24-23-detach-apply.md
 
 # Plan: a running apply survives a shell restart and is found again
 
-Line numbers are for `main` at 7d2ff26. Step 1 rebases onto #15, and any
-line that moves is corrected here in the same commit. `nixarchy-apply:N`
+Line numbers were written for `main` at 7d2ff26. Step 1 rebased onto
+e176454 (#21 and #15 merged). The numbered references to `bin/`, `tests/`
+and `flake.nix` did not move, and `FlatsnapModel.qml` and `Menu.qml` are
+named by function here. `nixarchy-apply:N`
 means `/nix/store/dcn12ll9cmzph7bjr0ijax8pnd4w2jmn-nixarchy-apply/bin/nixarchy-apply`.
 
 ## Approved decisions (self-contained)
@@ -238,6 +240,10 @@ PARR PLAN phase cites the step number.
    `nix flake check -L` are all green.
 
 9. **Live check on razer.** This folds in #22's remaining checks.
+   **Deferred (user decision, 2026-09-24).** This step runs in one combined
+   razer session with #15 and #22. That session waits until the unknown
+   deployer is found: it keeps rewriting `nixarchy.distrobox` and
+   restarting the shell. Until then the PR stays a draft with `Refs #22`.
    - **Reserve razer.** The bus claim alone has failed three times. Before
      anything else, the user is asked to reserve razer and to stop other
      agents' sessions on it. Then post the claim on the agent bus.
@@ -246,8 +252,9 @@ PARR PLAN phase cites the step number.
      third attempt (#22)":
      - Clone razer's current nixos_config source to `/tmp/flake-23` on
        razer, with `programs.nixarchy.flake = lib.mkForce "/tmp/flake-23"`
-       and the `nixarchy/nixarchy-flatsnap` input overridden to this
-       branch's head.
+       and the `nixarchy/nixarchy-flatsnap` input pinned to this branch's
+       head. Edit only the nested flatsnap node's `locked` entry in
+       `flake.lock`, not `--override-input` (#15's lesson).
      - Build on p620, `nix copy` it to razer, then
        `switch-to-configuration test`. Record the starting generation and
        the plugin link first.
@@ -255,7 +262,10 @@ PARR PLAN phase cites the step number.
      - Relaunch the shell through `hyprctl dispatch` with
        `NIXARCHY_FLAKE=/tmp/flake-23`, since razer's session exports
        `/etc/nixos`. Confirm the value from `/proc/<pid>/environ`.
-       Gotcha: kill the shell by pid, not with a bare `quickshell kill`.
+       Gotchas:
+       - Kill `omarchy-launch-shell` first, because it relaunches the shell
+         in a loop (#15's lesson).
+       - Then kill the shell by pid, not with a bare `quickshell kill`.
    - **Checks, in one real apply.** Queue one small entry, as #22 did.
      1. `a a`. The log shows the change lines, then the build from the
         journal.
