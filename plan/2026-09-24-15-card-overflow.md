@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 15
 spec: spec/2026-09-24-15-card-overflow.md
 ---
