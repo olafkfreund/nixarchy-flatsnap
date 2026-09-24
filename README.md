@@ -53,6 +53,7 @@ Flatpak or Snap ID grammar.
 | `c` | cycle through the channels this Snap publishes: stable → candidate → beta → edge |
 | `x` `x` | switch a Snap to classic confinement (two presses: it removes the sandbox) |
 | `p` | Flatpak overrides, e.g. `Context.filesystems=xdg-pictures:ro` (queuing with overrides takes a second `Enter`) |
+| `Enter` `Enter` | queue a classic Snap or a Flatpak with overrides: the first `Enter` says what leaves the sandbox |
 | `Tab` | switch between *Add* and *Declared* |
 | `d` then `y` | un-declare the selected app |
 | `a` then `a` | apply: the first `a` checks `flatsnap.nix` and lists what changes since the last apply, the second runs `nixarchy-apply` with the build log streaming into the panel |
@@ -130,12 +131,21 @@ back up, write, run `nix-instantiate --parse`, and restore the backup on failure
   trustworthy as the publisher, not as sandboxed. The panel says so on every
   Snap.
 - **Classic Snaps have no sandbox at all.** They take two presses to choose
-  and are marked in red.
+  and are marked in red. Queuing one takes a second `Enter` too, whether you
+  chose classic or the store publishes the Snap that way.
+- **Verified publishers are labelled, not required.** The card says whether
+  Flathub or the Snap Store verified the publisher (for Flathub, by which
+  website or login), and search results say `verified` or `unverified`. Most
+  apps are unverified; it is a fact to weigh, not a block. When the store
+  could not be asked, the card says `verification UNKNOWN` in red.
+- **Unknown permissions are not "none".** If Flathub's permission lookup fails,
+  the card says `permissions: UNKNOWN` in red instead of an empty list.
 - **snapd is off unless you need it.** The daemon and its setuid helper exist only
   while at least one Snap is declared, or one is still waiting to be removed.
 - **Flatpak permissions are shown before you queue.** Overrides only widen or
   narrow what you type, and nix-flatpak keeps any `flatpak override` you set
-  yourself.
+  yourself. Some overrides take the app out of its sandbox altogether; see
+  [Overrides that escape the sandbox](#overrides-that-escape-the-sandbox).
 - **Removal is conservative.** The reconciler removes only Snaps it installed.
   A Snap you installed by hand is never touched. Flatpaks follow nixarchy's
   `flatpaks.uninstallUnmanaged`. If that is on, `a` lists what the apply would
@@ -145,7 +155,32 @@ back up, write, run `nix-instantiate --parse`, and restore the backup on failure
 snapshot of the data when a snap is removed. On NixOS that step fails (it runs
 `sudo` under PAM), so the reconciler removes with `--purge`. The data would be
 deleted either way; the snapshot backup is what you give up. Copy anything you
-want to keep out of `~/snap/<name>` before un-declaring it.
+want to keep out of `~/snap/<name>` before un-declaring it. The panel says so
+when you press `d` on a Snap.
+
+### Overrides that escape the sandbox
+
+Every override takes a second `Enter`. These ones are named in red with what
+they grant, because they leave little of the sandbox (the list is
+`ESCAPES_JSON` in `bin/nixarchy-flatsnap`). A `:ro`, `:rw` or `:create`
+suffix does not change the match, and a subfolder such as `~/Games` is not on
+the list.
+
+| Override | Grants |
+|---|---|
+| `Context.filesystems=host`, `host-os`, `host-etc` | the host filesystem |
+| `Context.filesystems=home`, `~` | your whole home folder |
+| `Context.sockets=session-bus` | the whole session bus, which can run commands outside the sandbox |
+| `Context.sockets=system-bus` | the whole system bus |
+| `Context.sockets=ssh-auth` | your SSH agent and its keys |
+| `Context.sockets=gpg-agent` | your GPG agent and its keys |
+| `Context.devices=all` | every device, including cameras and input |
+| `Session Bus Policy.org.freedesktop.Flatpak=talk` or `own` | running commands outside the sandbox |
+| `System Bus Policy.<any name>=talk` or `own` | talking to system services |
+
+The two Bus Policy rows cannot be typed into the panel's overrides field yet
+(it splits on spaces). They apply to `nixarchy-flatsnap add` on the command
+line.
 
 ## Rollback
 
