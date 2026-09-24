@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 36
 spec: spec/2026-09-25-36-footer-glitches.md
 ---
