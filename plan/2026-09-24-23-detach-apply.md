@@ -511,3 +511,71 @@ PR #34 merged as 1a04bc1, and #23 is closed. The follow-ups:
 - **#33 stays open, retitled to its one remaining check:** the apply log
   follows only at the end, and the scroll keys work, during a real build.
   Every other check passed.
+
+## Live check (#33, #35), 2026-09-25
+
+This was one user-reserved razer session (claim `$Tx-y3Ts…`). The setup
+and #33's results are in plan/2026-09-24-15-card-overflow.md under the same
+heading. #33 passed.
+
+### #35: pkexec from the `nixarchy-rebuild` user unit, not verified
+
+- **Preparation (done).**
+  - razer's `sudo -n true` succeeds, so apply would choose `passwordless`.
+    For one apply the shell was relaunched with
+    `NH_ELEVATION_STRATEGY=pkexec`, which `elevation()` respects, and
+    `NIXARCHY_FLAKE=/tmp/flake-33`. razer's sudo configuration was not
+    changed.
+  - Confirmed from `/proc/<pid>/environ`.
+- **Relevant finding.** razer's polkit rule for nh gives
+  `AUTH_ADMIN_KEEP` to `org.freedesktop.policykit.exec` of `env` **only
+  when `subject.local && subject.active`**. A process in `user@.service`
+  may not count as being in an active session. So each of nh's three
+  elevations (profile build, `test`, `boot`) may prompt separately, or be
+  refused. That is exactly the open question.
+- **The polkit agent** is the Omarchy shell itself. No separate agent
+  process runs.
+- **What happened.**
+  - While the check waited for the user, p620-08903c deployed razer at the
+    user's direction ("flatsnap is finished, go now"). The deploy made
+    **generation 2957** (nixos_config main ce3014c64), razer's new
+    baseline, and replaced the shell with one that had
+    `NIXARCHY_FLAKE=/etc/nixos` and no `NH_ELEVATION_STRATEGY`.
+  - The `a a` sent at 00:13 then reached the new shell's launcher search,
+    not the flatsnap panel. No apply started: the unit's `InvocationID`
+    stayed `2cfff8a7…`, and no `pkexec` process appeared.
+- **Not verified:** the approved-prompt path to `— applied —`, the number
+  of prompts, and the cancelled-prompt path ("apply failed (exit N)").
+  #35 stays open.
+  - It needs a new window on razer's 2957 baseline, with a clone of 2957's
+    nixos_config.
+  - Or it needs a host whose sudo asks for a password.
+
+### Restore (verified by end state)
+
+- **No rollback.** 2957 is the baseline, and it was not switched or
+  changed.
+- **Generations.** My generations 2955 and 2956 are deleted
+  (`nix-env --delete-generations 2955 2956`). The list is now 2952, 2953,
+  2954 and 2957 (current).
+  - `switch-to-configuration boot` of the current profile (2957) removed
+    the stale `nixos-generation-2956` Lanzaboote entry. /boot now holds
+    2954 and 2957 only.
+- **Files and unit.**
+  - `flatsnap.nix`, its lock and the apply marker are removed. The
+    `nixarchy-rebuild` unit is stopped and reset (not-found, dead).
+  - `/tmp/flake-33` (razer and p620) and `/tmp/zz-vl` are removed.
+  - eDP-1 is at scale 1. One shell runs, 08903c's, with
+    `NIXARCHY_FLAKE=/etc/nixos` and no `NH_ELEVATION_STRATEGY`.
+  - 0 failed units, system and user.
+- **Not restored: the hello-world snap.**
+  - 2957 has no snapd, because snapd came only from the test generations'
+    `flatsnap.nix`. So `snap remove --purge hello-world` is not
+    available.
+  - `/var/lib/snapd/snaps/hello-world_29.snap` remains, and so does its
+    transient mount unit `/run/systemd/system/snap-hello\x2dworld-29.mount`
+    (active). The mount unit is gone at the next reboot.
+  - Removing the snap needs snapd running, for example a short
+    `switch-to-configuration test` of a config with snapd. That is left to
+    the user.
+  - `core` and the other pre-existing snaps were not touched.
