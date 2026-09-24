@@ -14,6 +14,13 @@ FP_RE='^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*){2,}$'
 fp_id_ok() { [ ${#1} -le 255 ] && [[ $1 =~ $FP_RE ]]; }
 SNAP_RE='^[a-z0-9][a-z0-9-]{0,39}$'
 CHAN_RE='^(stable|candidate|beta|edge)$'
+# Flatpak override: Section.key=value. Context keys are lists (filesystems,
+# sockets, ...); everything else is a string, as in nix-flatpak's option.
+# The three parts are also what check_entries holds a hand edit to.
+OV_SEC='[A-Za-z][A-Za-z ]{0,40}'
+OV_KEY='[A-Za-z0-9_.-]{1,100}'
+OV_VAL='[A-Za-z0-9_./:~!@+=-]{1,200}'
+OV_RE="^($OV_SEC)\\.($OV_KEY)=($OV_VAL)\$"
 
 die() { jq -cn --arg e "$1" '{error: $e}'; exit 2; }
 
@@ -262,6 +269,45 @@ load_state() {
     die "$f is not in the shape this tool writes; fix or move it, then retry"
 }
 
+# load_state checks the keys; this checks what is inside them, against the
+# same grammars add uses, because a hand edit can put anything there and
+# apply builds it as root. jq lists "kind<TAB>value", bash tests each. jq
+# refuses control characters first, so every value is exactly one line.
+check_entries() {
+  local f kind val lines; f=$(file)
+  lines=$(jq -r '
+    def str($k): if type != "string" then "bad\t\(tojson) is not a string"
+      elif test("[[:cntrl:]]") then "bad\t\(tojson) has a control character"
+      else "\($k)\t\(.)" end;
+    def each($what; f): if type == "array" then .[] | f else "bad\t\($what) is not a list" end;
+    def obj($what; f): if type == "object" then f else "bad\t\($what) is not an attribute set" end;
+    def ov: obj("overrides"; to_entries[]
+      | (.key | str("sec")),
+        (.value | obj("an override section"; to_entries[]
+          | (.key | str("key")),
+            (.value | if type == "array" then .[] else . end | str("val")))));
+    def fp: obj("a flatpak entry"; (.appId | str("fp")), ((.overrides // {}) | ov));
+    def sn: obj("a snap entry"; (.name | str("snap")), ((.channel // "stable") | str("chan")),
+      (if (.classic // false | type) == "boolean" then empty else "bad\tclassic must be true or false" end));
+    (.flatpaks | each("flatpaks"; fp)),
+    (.snaps | each("snaps"; sn)),
+    (.pendingRemoval | each("pendingRemoval"; str("pending")))' <<<"$STATE") ||
+    die "$f: could not check its entries"
+  [ -n "$lines" ] || return 0
+  while IFS=$'\t' read -r kind val; do
+    case $kind in
+      fp) fp_id_ok "$val" || die "$f: Flatpak app ID \"$val\" is not valid; fix or remove it" ;;
+      snap|pending) [[ $val =~ $SNAP_RE ]] || die "$f: snap name \"$val\" is not valid; fix or remove it" ;;
+      chan) [[ $val =~ $CHAN_RE ]] || die "$f: snap channel \"$val\" is not stable, candidate, beta or edge" ;;
+      sec) [[ $val =~ ^$OV_SEC$ ]] || die "$f: override section \"$val\" is not valid; fix or remove it" ;;
+      key) [[ $val =~ ^$OV_KEY$ ]] || die "$f: override key \"$val\" is not valid; fix or remove it" ;;
+      val) [[ $val =~ ^$OV_VAL$ ]] || die "$f: override value \"$val\" is not valid; fix or remove it" ;;
+      bad) die "$f: $val; fix or remove it" ;;
+      *) die "$f: an entry has a value this tool cannot check; fix or remove it" ;;
+    esac
+  done <<<"$lines"
+}
+
 # JSON state -> Nix. Every string goes through nixstr; the ID grammars
 # already exclude \, " and ${, so this is the second line, not the first.
 render() {
@@ -281,7 +327,8 @@ render() {
         + (if (.overrides // {}) == {} then "" else " overrides = \(.overrides | nix);" end) + " }"),
     "    ];",
     "    snaps = [",
-    (.snaps[] | "      { name = \(.name | nixstr); channel = \(.channel | nixstr); classic = \(.classic | tostring); }"),
+    # The module defaults, for a hand-written { name = "x"; }.
+    (.snaps[] | "      { name = \(.name | nixstr); channel = \(.channel // "stable" | nixstr); classic = \(.classic // false | tostring); }"),
     "    ];",
     # Un-declared snaps keep snapd on until they are actually gone; see module.nix.
     (if .pendingRemoval == [] then empty
@@ -359,10 +406,6 @@ cmd_list() {
       ($st.snaps[] | {store: "snap", id: .name, channel, classic,
         installed: (if $i.snap == null then null else (.name as $a | $i.snap | index($a) != null) end)}) ]'
 }
-
-# Flatpak override: Section.key=value. Context keys are lists (filesystems,
-# sockets, ...); everything else is a string, as in nix-flatpak's option.
-OV_RE='^([A-Za-z][A-Za-z ]{0,40})\.([A-Za-z0-9_.-]{1,100})=([A-Za-z0-9_./:~!@+=-]{1,200})$'
 
 cmd_add() {
   local st

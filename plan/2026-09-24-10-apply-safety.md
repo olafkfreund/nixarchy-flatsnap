@@ -190,6 +190,28 @@ numbers are only a guide.
    → verify by: the new cli.sh case 2 (step 9) fails before this step and
    passes after it. The existing add-refusal cases still pass.
 
+   *As implemented:*
+   - **Grammars.** `OV_RE` is now built from `OV_SEC`/`OV_KEY`/`OV_VAL`, next
+     to the other grammars at the top of the script.
+   - **Non-string values.** jq also refuses:
+     - a value that is not a string;
+     - a list that is not a list, and an entry that is not an attribute set;
+     - any control character (newline, tab), so every checked value is one
+       line.
+
+     If jq itself fails, that is an error, never a pass.
+   - **Render defaults.** `render` falls back to the module's defaults
+     (`channel` `stable`, `classic` false) for a hand-written
+     `{ name = "x"; }`. The module accepts that entry, but render emitted
+     `null` for it, so regenerating it would have failed.
+   - **When it runs.** `check_entries` is only defined here. Steps 5-6 call
+     it, so case 2 is proven there. Before that, a unit check of the function
+     (eval'd without `main`) accepted a full valid state and the empty one.
+     It refused, each with the entry named: a bad snap name, Flatpak ID,
+     channel, `classic`, override value and pendingRemoval; a newline, a
+     tab, a trailing newline, a number, a non-list and a non-set.
+     `checks.cli`: 110 passed.
+
 5. **`bin/nixarchy-flatsnap`: `cmd_preflight`.**
    - Call `load_state` and `check_entries` first, before the host `nix eval`.
    - Add `current` to the eval's `--apply` expression.
