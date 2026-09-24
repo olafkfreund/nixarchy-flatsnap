@@ -19,9 +19,6 @@ Item {
   property bool opened: false
   property var targetScreen: null
 
-  readonly property real textScale: 1.45
-  function px(base) { return Math.round(base * root.textScale) }
-
   function focusedScreen() {
     var name = Hyprland.focusedMonitor ? String(Hyprland.focusedMonitor.name || "") : ""
     var screens = Quickshell.screens
@@ -49,7 +46,7 @@ Item {
     textFormat: Text.PlainText
     wrapMode: Text.Wrap
     font.family: Style.font.family
-    font.pixelSize: root.px(Style.font.caption)
+    font.pixelSize: Style.font.title
     color: Color.menu.text
   }
 
@@ -161,6 +158,7 @@ Item {
           id: field
           anchors { top: parent.top; left: parent.left; right: parent.right }
           placeholderText: "paste a Flathub / Snapcraft link, an app ID, or a snap name…"
+          font.pixelSize: Style.font.title
           foreground: Color.menu.text
         }
 
@@ -186,7 +184,7 @@ Item {
             readonly property var c: fs.card || ({})
             readonly property bool isSnap: c.store === "snap"
 
-            Line { text: (cardCol.c.name || "") + "   (" + (cardCol.isSnap ? "Snap" : "Flatpak") + ": " + (cardCol.c.id || "") + ")"; font.pixelSize: root.px(Style.font.subtitle); width: parent.width }
+            Line { text: (cardCol.c.name || "") + "   (" + (cardCol.isSnap ? "Snap" : "Flatpak") + ": " + (cardCol.c.id || "") + ")"; font.pixelSize: Style.font.heading; width: parent.width }
             Line { text: cardCol.c.summary || ""; width: parent.width }
             Line { text: "publisher: " + (cardCol.c.publisher || "unknown") + "    license: " + (cardCol.c.license || "unknown"); width: parent.width }
 
@@ -209,6 +207,7 @@ Item {
                 id: ovField
                 width: cardView.width * 0.7
                 placeholderText: "Context.filesystems=xdg-pictures:ro  Environment.LC_ALL=C.UTF-8"
+                font.pixelSize: Style.font.title
                 foreground: Color.menu.text
                 text: fs.overrides
                 onTextChanged: fs.overrides = text
