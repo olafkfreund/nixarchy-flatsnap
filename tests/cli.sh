@@ -144,12 +144,18 @@ for foreign in '{ config, ... }: { }' '{ services.foo.enable = true; programs.ni
   [ $rc -eq 2 ] && [ "$(cat "$NIXARCHY_FLATSNAP_FILE")" = "$foreign" ] && ok || bad "foreign shape overwritten (rc=$rc): $out"
 done
 
-# A generated file that fails to parse restores the backup.
+# A generated file that fails to parse leaves the old one in place.
 run rm flatpak org.hand.Edited >/dev/null 2>&1; rm -f "$NIXARCHY_FLATSNAP_FILE"
 run add snap hello-world >/dev/null; cp "$NIXARCHY_FLATSNAP_FILE" "$work/before"
 mkdir "$work/fakebin"; printf '#!/bin/sh\ncase "$1" in --parse) exit 1;; esac\nexec %s "$@"\n' "$(command -v nix-instantiate)" >"$work/fakebin/nix-instantiate"; chmod +x "$work/fakebin/nix-instantiate"
 out=$(PATH="$work/fakebin:$PATH" run add snap code); rc=$?
 [ $rc -eq 2 ] && cmp -s "$work/before" "$NIXARCHY_FLATSNAP_FILE" && [ -z "$(find "$work" -name 'flatsnap.nix.??????')" ] && ok || bad "parse failure did not restore (rc=$rc): $out"
+[ -z "$(find "$work" -name '*.bak')" ] && ok || bad "a .bak was written"
+# No stale state comes back: an old .bak beside a deleted file stays unused (#13 C4).
+mv "$NIXARCHY_FLATSNAP_FILE" "$NIXARCHY_FLATSNAP_FILE.bak"
+out=$(PATH="$work/fakebin:$PATH" run add snap code); rc=$?
+[ $rc -eq 2 ] && [ ! -e "$NIXARCHY_FLATSNAP_FILE" ] && ok || bad "stale .bak restored (rc=$rc): $out"
+mv "$NIXARCHY_FLATSNAP_FILE.bak" "$NIXARCHY_FLATSNAP_FILE"
 
 # installed: stub flatpak/snap on PATH.
 printf '#!/bin/sh\necho org.gnome.Calculator\n' >"$work/fakebin/flatpak"

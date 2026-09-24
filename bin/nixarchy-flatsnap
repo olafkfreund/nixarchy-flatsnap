@@ -271,7 +271,8 @@ render() {
     "}"'
 }
 
-# Backup, write, parse-check, restore on failure: the nixarchy idiom.
+# Write aside, parse-check, rename: $f is only ever replaced by an atomic mv
+# of a file that parsed, so a failure leaves it exactly as it was.
 write_state() {
   local f tmp st; f=$(file)
   st=$(cat)
@@ -284,12 +285,10 @@ write_state() {
   mkdir -p "$(dirname "$f")"
   tmp=$(mktemp "$f.XXXXXX")
   render <<<"$st" >"$tmp"
-  [ -f "$f" ] && cp -p "$f" "$f.bak"
   if nix-instantiate --parse "$tmp" >/dev/null 2>&1; then
     mv "$tmp" "$f"
   else
     rm -f "$tmp"
-    [ -f "$f.bak" ] && cp -p "$f.bak" "$f"
     die "generated file did not parse; $f left as it was"
   fi
 }
