@@ -39,6 +39,19 @@ keys and jumps to its end on every new line. The footer help line
 8. The log keys are checked live with **one** real apply on razer, using
    #22's clone-and-restore procedure (step 13).
 
+**Decided by user during implementation (2026-09-24):**
+
+9. Scroll keys must not disarm a pending confirmation (classic, override
+   or queue arm, apply arm, delete arm). This covers `j`/`k` (not typed
+   into a field), Up/Down and PgUp/PgDn on a card. Any other key still
+   disarms. This replaces the step-5 line "a scroll key still cancels a
+   pending confirmation". The rule moves from `Menu.qml`'s
+   `Keys.onPressed` into `FlatsnapModel.qml` (`cancelsConfirm` and
+   `keyPressed`) so `tests/model.qml` can check it. The cases are: arm →
+   scroll → still armed → Enter queues; arm → another key → disarmed; `j`
+   typed into a field → disarmed. In the log view no key disarms, as
+   before, because that branch returns first.
+
 **Constraints (unchanged from the intent):**
 
 - The UI stays keyboard only.
@@ -138,8 +151,9 @@ number in its body.
      *(Deviation from the first draft of this step, which edited each
      `switch` case: one block covers the same keys with the same
      behaviour, and does not touch the cases.)*
-   - The confirmation-cancel rule (`:103-109`) is unchanged, so a scroll
-     key still cancels a pending confirmation, like any other key.
+   - ~~The confirmation-cancel rule is unchanged, so a scroll key still
+     cancels a pending confirmation.~~ Superseded by decision 9: on a
+     card, scroll keys keep the arm.
 
    → Verify by `nix flake check -L` and the QML load (step 11).
 

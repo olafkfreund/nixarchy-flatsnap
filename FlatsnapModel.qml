@@ -308,6 +308,21 @@ QtObject {
     message = "checking…"   // after _run, which clears it
   }
 
+  // A pending confirmation is cancelled by any real key except the ones
+  // that confirm it (y a x, Enter on an armed queue) and, on a card, the
+  // keys that only scroll it: reading the card before confirming must not
+  // cancel (decided by the user, #15). Typed into a field, j k are text.
+  function cancelsConfirm(k, bare, typing) {
+    if (!(pendingDelete !== "" || applyArmed || classicArmed || queueArmed)) return false
+    if (k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt || k === Qt.Key_Meta) return false
+    if (k === Qt.Key_Y || k === Qt.Key_A || k === Qt.Key_X) return false
+    if ((k === Qt.Key_Return || k === Qt.Key_Enter) && queueArmed) return false
+    if (view === "card" && (k === Qt.Key_Down || k === Qt.Key_Up || k === Qt.Key_PageDown || k === Qt.Key_PageUp
+                            || (bare && !typing && (k === Qt.Key_J || k === Qt.Key_K)))) return false
+    return true
+  }
+  function keyPressed(k, bare, typing) { if (cancelsConfirm(k, bare, typing)) { disarm(); message = "" } }
+
   function disarm() { applyArmed = false; classicArmed = false; queueArmed = false; pendingDelete = "" }
 
   function _startApply() {

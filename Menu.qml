@@ -130,7 +130,6 @@ Item {
           var k = event.key
           var bare = event.modifiers === Qt.NoModifier
           var typing = field.activeFocus || ovField.activeFocus
-          var modifier = k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt || k === Qt.Key_Meta
 
           if (fs.showingLog) {
             // ESC leaves the build running: it is elevating and switching a
@@ -143,13 +142,9 @@ Item {
             return
           }
 
-          // A pending confirmation is cancelled by any other real key.
-          var enter = k === Qt.Key_Return || k === Qt.Key_Enter
-          if (!modifier && k !== Qt.Key_Y && k !== Qt.Key_A && k !== Qt.Key_X
-              && !(enter && fs.queueArmed)
-              && (fs.pendingDelete !== "" || fs.applyArmed || fs.classicArmed || fs.queueArmed)) {
-            fs.disarm(); fs.message = ""
-          }
+          // A pending confirmation is cancelled by any other real key; the
+          // rule, with its exceptions, is in the model.
+          fs.keyPressed(k, bare, typing)
 
           // On a card, the move keys scroll it: the list they moved is hidden.
           // j k are letters, so they scroll only when no field has the
