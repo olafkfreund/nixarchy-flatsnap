@@ -435,3 +435,20 @@ The live check (step 11) runs on razer only.
   same format this tool has always written, so no user file needs migrating.
 - **On razer:** remove the staged plugin directory and restore the previous
   plugin build. The `/tmp` flake clone is discarded.
+
+## Post-merge note (2026-09-24)
+
+PR #20 merged as e67269b, and #10 is closed. The user chose "merge now,
+verify later". The follow-ups:
+
+- **Step 11, the unfinished live check.** The real apply to `— applied —`
+  and the during-build checks (Esc, `l`, reopen, `d`/Enter refused) are
+  olafkfreund/nixarchy-flatsnap#22. It records what passed, why the two
+  attempts on razer were cut short, and the `NIXARCHY_FLAKE` relaunch the
+  next run needs.
+- **Step 13.** nixarchy-apply builds user-writable `apps.nix`,
+  `services.nix` and `advanced.nix` as root configuration:
+  olafkfreund/nixarchy#967. The user asked for it to be opened after the
+  merge. A search found no existing issue.
+- **Step 14.** Apply dies with the shell, so it should run through
+  `nixarchy-apply --detach`: olafkfreund/nixarchy-flatsnap#23.
