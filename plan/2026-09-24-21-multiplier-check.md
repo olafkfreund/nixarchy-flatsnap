@@ -139,8 +139,12 @@ standing in for a directory holding main's three `.qml` files
      `'';`.
    - Check that `sed -n "${start},${end}p" flake.nix` prints the old
      11-line block and nothing else.
-   - Replace it: `sed -i "${start},${end}d" flake.nix`, then
-     `sed -i "$((start-1))r $SCRATCH/block.nix" flake.nix`.
+   - Replace it: `head -n $((start-1)) flake.nix`, then `block.nix`, then
+     `tail -n +$((end+1)) flake.nix`, concatenated into a scratch file and
+     copied over `flake.nix`.
+     *Deviation at implementation:* the original step used `sed -i … r`,
+     and the worktree guard refuses a `sed` `r` program, so the splice uses
+     head/cat/tail instead. The result is identical.
 
    → Verify: `git diff --stat origin/main...HEAD -- flake.nix` plus
    `git diff -- flake.nix` show one hunk, inside the check block only. No

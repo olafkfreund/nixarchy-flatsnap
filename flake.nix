@@ -106,17 +106,61 @@
             touch "$out"
           '';
 
-          # A fixed multiplier on a font token stops text following the
-          # shell's text size (#9). Every size is a Style.font.* token.
-          no-text-multiplier = pkgs.runCommand "nixarchy-flatsnap-text-size" { } ''
-            if grep -nE 'textScale|uiScale|px\(' ${./Menu.qml} \
-              || grep -n 'pixelSize:' ${./Menu.qml} \
-                 | grep -vE 'pixelSize: Style\.font\.[A-Za-z]+([;}[:space:]]|$)'; then
-              echo "fixed text multiplier above; use a Style.font token" >&2
-              exit 1
-            fi
-            touch "$out"
-          '';
+          # A multiplier, or any arithmetic, on a font token stops text
+          # following the shell's text size (#9, #21). Every size in every
+          # .qml is a bare Style.font.* token. The cases prove the check first.
+          no-text-multiplier =
+            let
+              qml = nixpkgs.lib.fileset.toSource {
+                root = ./.;
+                fileset = nixpkgs.lib.fileset.fileFilter (f: f.hasExt "qml") ./.;
+              };
+            in
+            pkgs.runCommand "nixarchy-flatsnap-text-size" { } ''
+              # Prints each offending binding; succeeds when there is one.
+              offenders() {
+                {
+                  grep -rHnE 'textScale|uiScale|px\(' "$@"
+                  grep -rHnoE '(pixelSize|pointSize|fontSize):[^;}]*' "$@" \
+                    | grep -vE '^[^:]+:[0-9]+:(pixelSize|pointSize|fontSize):[[:space:]]*Style\.font\.[A-Za-z]+[[:space:]]*$'
+                } | grep .
+              }
+
+              while IFS= read -r l; do
+                printf '%s\n' "$l" > case.qml
+                offenders case.qml >/dev/null || { echo "check missed: $l" >&2; exit 1; }
+              done <<EOF
+              font.pixelSize: Style.font.title * 1.45
+              font.pixelSize: Style.font.title$(printf '\t')* 1.45
+              font.pixelSize: Style.font.title*1.45
+              font.pixelSize: Style.font.title + 4
+              font.pixelSize: Style.font.title / 2
+              font.pixelSize: Math.round(Style.font.title * 1.45)
+              font.pixelSize: 14
+              fontSize: Style.font.title * 1.45
+              font.pointSize: Style.font.title * 1.45
+              a.pixelSize: Style.font.body; b.pixelSize: Style.font.body * 2
+              font.pixelSize: px(Style.font.body)
+              EOF
+
+              while IFS= read -r l; do
+                printf '%s\n' "$l" > case.qml
+                if offenders case.qml >&2; then echo "check flagged a clean line: $l" >&2; exit 1; fi
+              done <<'EOF'
+              font.pixelSize: Style.font.title
+              font.pixelSize: Style.font.title; font.bold: true
+              Line { text: "x"; font.pixelSize: Style.font.heading; width: parent.width }
+              fontSize: Style.font.body }
+              font.pixelSize:Style.font.caption
+              font.pointSize: Style.font.title
+              EOF
+
+              if offenders ${qml}; then
+                echo "fixed text multiplier above; use a bare Style.font token" >&2
+                exit 1
+              fi
+              touch "$out"
+            '';
 
           # snapd -- and its setuid snap-confine -- only exists while there is
           # a snap to run or one still to remove. Pure evaluation, no VM.
