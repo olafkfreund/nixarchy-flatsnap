@@ -1,0 +1,41 @@
+{
+  "metadata": {
+    "permissions": {
+      "devices": [
+        "all"
+      ],
+      "sockets": [
+        "fallback-x11",
+        "pulseaudio",
+        "ssh-auth",
+        "wayland"
+      ],
+      "shared": [
+        "ipc",
+        "network"
+      ],
+      "session-bus": {
+        "talk": [
+          "org.freedesktop.Flatpak",
+          "org.freedesktop.Notifications",
+          "org.kde.kwalletd5",
+          "com.canonical.AppMenu.Registrar",
+          "com.canonical.AppMenu.Registrar.*",
+          "org.freedesktop.secrets",
+          "org.kde.kwalletd6"
+        ]
+      },
+      "filesystems": [
+        "host"
+      ],
+      "features": [
+        "devel"
+      ],
+      "system-bus": {
+        "talk": [
+          "org.freedesktop.login1"
+        ]
+      }
+    }
+  }
+}

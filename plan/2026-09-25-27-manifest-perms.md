@@ -327,3 +327,24 @@ nix flake check -L    # shellcheck, cli, manifest, no-hardcoded-colours, no-text
 - **On razer:** step 12. It restores generation 2957's system, the monitor
   line and the shell without `NIXARCHY_FLAKE`, removes `/tmp/flake-27`,
   and removes nothing else.
+
+## Implementation notes
+
+**2026-09-25, user decision: razer steps 11-12 are deferred.** Steps 11 and
+12 are not run on this branch. They move to one combined razer session
+after #26 merges, which checks #27's card together with the other merged
+work. The PR merges on the local checks (step 9) and CI.
+
+**2026-09-25, step 1 (rebase).** Rebased onto origin/main 9bd1c95 (#36 at
+37c1b64, #28 at 9bd1c95) with no conflicts.
+- #36 added `typing` / `keysHint` and a card `onHeightChanged` that keeps
+  the bottom in view when the footer grows. The new block is static card
+  content, so it does not interact with either. `Line` already has
+  `wrapMode: Text.Wrap`.
+- #28 added `_ovHead` / `_splitOverrides` (the panel's copy of `OV_*`).
+  They only change how the overrides field is split. The override form
+  (`Session Bus Policy.org.freedesktop.Flatpak=talk`) and `_escapes` are
+  unchanged, so the decisions above stand. Step 6 tests the Bus Policy
+  form through `queue()`, which goes through `_splitOverrides`.
+- Before any edit: `tests/cli.sh` gave 182 passed, 0 failed, and
+  `tests/model.sh` gave 147 passed, 0 failed.

@@ -1,0 +1,16 @@
+{
+  "name": "Visual Studio Code",
+  "summary": "Code editing. Redefined.",
+  "developer_name": "Microsoft Corporation",
+  "project_license": "LicenseRef-proprietary=https://code.visualstudio.com/license",
+  "metadata": {
+    "flathub::verification::method": null,
+    "flathub::verification::login_is_organization": null,
+    "flathub::verification::login_name": null,
+    "flathub::verification::login_provider": null,
+    "flathub::verification::website": null,
+    "flathub::verification::timestamp": null,
+    "flathub::manifest": null,
+    "flathub::verification::verified": null
+  }
+}
