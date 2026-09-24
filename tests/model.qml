@@ -75,6 +75,62 @@ ShellRoot {
     fs.queue()
     t.ok(!fs.overridesArmed, "no overrides: nothing to confirm")
 
+    // ---- #10: a running apply blocks edits and stays visible ------------
+    // model.sh runs this on a PATH where nixarchy-apply is a stub.
+    fs.busy = false
+    var before = fs._writer.command.join(" ")
+    fs.applying = true
+    fs._showCard({ store: "flatpak", id: "org.gnome.Calculator", name: "Calculator", permissions: {} })
+    fs.queue()
+    t.ok(!fs.busy && fs._writer.command.join(" ") === before && fs.message.indexOf("rebuild is running") >= 0,
+         "queue refused while applying: " + fs.message)
+    fs.tab = 1; fs.declared = [{ store: "snap", id: "code" }]; fs.cursor = 0
+    fs.remove()
+    t.ok(!fs.busy && fs.pendingDelete === "" && fs.message.indexOf("rebuild is running") >= 0,
+         "remove refused while applying: " + fs.message)
+
+    fs.reset()
+    t.ok(fs.showingLog, "reopening during an apply opens on the log")
+    fs.applying = false
+    fs.reset()
+    t.ok(!fs.showingLog, "reopening after it opens on the lists")
+
+    // B4: "checking…" survives _run.
+    fs.applyArmed = false
+    fs.apply()
+    t.ok(fs.busy && fs.message === "checking…", "apply says checking…, got " + fs.message)
+    fs.busy = false
+
+    // The first a always arms and lists the changes; nothing is started.
+    var hash = "ab".repeat(32)
+    fs._onPreflight({ ok: true, willRemove: [], stateHash: hash,
+                      changes: [{ op: "add", store: "flatpak", id: "org.a.B", detail: "" },
+                                { op: "change", store: "snap", id: "code", detail: "channel stable → edge" }] })
+    t.ok(fs.applyArmed && !fs._apply.running, "a good preflight arms and does not start")
+    t.ok(fs.message.indexOf("+ org.a.B") >= 0 && fs.message.indexOf("~ code (channel stable → edge)") >= 0,
+         "the message lists the changes: " + fs.message)
+    var many = []
+    for (var n = 0; n < 8; n++) many.push({ op: "remove", store: "flatpak", id: "org.x.A" + n, detail: "" })
+    fs._onPreflight({ ok: true, willRemove: [], stateHash: hash, changes: many })
+    t.ok(fs.message.indexOf("− org.x.A5") >= 0 && fs.message.indexOf("org.x.A6") < 0 && fs.message.indexOf("and 2 more") >= 0,
+         "six changes, then a count: " + fs.message)
+    fs._onPreflight({ ok: true, willRemove: [], stateHash: hash, changes: [] })
+    t.ok(fs.applyArmed && fs.message.indexOf("nothing changed") === 0, "no changes still arms: " + fs.message)
+
+    // The second a builds exactly the state preflight showed.
+    fs.apply()
+    var cmd = fs._apply.command
+    t.ok(cmd.slice(cmd.length - 3).join(" ") === "apply --expect " + hash, "apply --expect <hash>: " + cmd.join(" "))
+    t.ok(fs.applying && fs.showingLog, "the apply shows its log")
+
+    // l brings the log back; an end while it is hidden is said in the message.
+    fs.showingLog = false
+    fs.showLog()
+    t.ok(fs.showingLog, "showLog() shows the log")
+    fs.showingLog = false
+    fs._ended("applied")
+    t.ok(fs.message === "applied — l shows the log", "hidden end is announced: " + fs.message)
+
     console.log("model: " + t.pass + " passed, " + t.fail + " failed")
     Qt.exit(t.fail === 0 ? 0 : 1)
   }
