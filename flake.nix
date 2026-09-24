@@ -53,7 +53,7 @@
           # The same CLI on PATH, with its tools pinned, for a terminal.
           cli = pkgs.writeShellApplication {
             name = "nixarchy-flatsnap";
-            runtimeInputs = with pkgs; [ curl jq gawk coreutils gnused gnugrep nix util-linux ];
+            runtimeInputs = with pkgs; [ curl jq gawk coreutils gnused gnugrep nix util-linux systemd ];
             text = builtins.readFile ./bin/nixarchy-flatsnap;
             meta = with pkgs.lib; {
               description = "Declare Flatpak and Snap apps for nixarchy from a terminal";
