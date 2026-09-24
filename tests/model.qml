@@ -255,6 +255,71 @@ ShellRoot {
     fs._ended("applied")
     t.ok(fs.message === "applied — l shows the log", "hidden end is announced: " + fs.message)
 
+
+    // ---- #23: the build runs in the nixarchy-rebuild unit ---------------
+    // Driven through the handlers: the stub systemctl reports no unit, so
+    // any status query started here answers "none" and changes nothing.
+    var id = "0123456789abcdef0123456789abcdef", other = "fedcba9876543210fedcba9876543210"
+    function tail(a) { return a.length > 0 ? a[a.length - 1] : "" }
+
+    // 1: the launcher's "started" record follows that run's journal.
+    fs._startApply()
+    fs._applyLine("+ flatpak org.a.B")
+    fs._applyLine("{\"nixarchyFlatsnapStarted\":{\"invocationId\":\"" + id + "\"}}")
+    t.ok(fs.applying && fs._invocation === id && fs._applyDone, "started: watching " + fs._invocation)
+    t.ok(fs._follow.command.slice(-3).join(" ") === "apply-log " + id + " --follow", "follows: " + fs._follow.command.join(" "))
+    t.ok(fs._poll.running, "polls the unit's state")
+    t.ok(fs.applyLog.indexOf("+ flatpak org.a.B") >= 0, "the change lines stay in the log")
+    // 6: nothing in the journal ends the apply, however it looks.
+    fs._follow.stdout.read("{\"nixarchyFlatsnapApply\":{\"ok\":true,\"exit\":0,\"message\":\"applied\"}}")
+    t.ok(fs.applying, "a record-shaped journal line does not end the apply")
+    fs._onStatus({ state: "running", invocationId: id, ours: true, shown: false, exit: 0, result: "success" })
+    t.ok(fs.applying, "still running: still applying")
+    // 2: the unit's state ends it: the log again, then the result, then ack.
+    fs._onStatus({ state: "failed", invocationId: id, ours: true, shown: false, exit: 4, result: "exit-code" })
+    t.ok(!fs.applying && !fs._poll.running, "failed: no longer applying")
+    t.ok(fs._reload.command.slice(-2).join(" ") === "apply-log " + id, "reloads the log: " + fs._reload.command.join(" "))
+    fs._onReloaded("building\nerror: boom\n")
+    t.ok(tail(fs.applyLog) === "— apply failed (exit 4) —" && fs.applyLog.indexOf("error: boom") >= 0
+         && fs.applyLog.indexOf("+ flatpak org.a.B") >= 0, "failed (exit 4): " + fs.applyLog.join(" | "))
+    t.ok(fs._ack.command.slice(-3).join(" ") === "apply-status --ack " + id, "acks: " + fs._ack.command.join(" "))
+    fs._onStatus({ state: "failed", invocationId: id, ours: true, shown: false, exit: 9, result: "signal" })
+    t.ok(fs._pendingEnd === "apply failed (killed)", "a signal is killed, not an exit code: " + fs._pendingEnd)
+
+    // 3: after a restart, or from a terminal: a running build is found and watched.
+    fs.applying = false; fs.showingLog = false; fs.applyLog = []; fs._invocation = ""
+    fs._onStatus({ state: "running", invocationId: other, ours: false, shown: false, exit: 0, result: "success" })
+    t.ok(fs.applying && fs.showingLog && fs._invocation === other, "a running build is watched")
+    t.ok(fs.applyLog[0] === "a rebuild started outside the panel", "and named: " + fs.applyLog[0])
+    fs._showCard({ store: "flatpak", id: "org.gnome.Calculator", name: "Calculator", permissions: {} })
+    fs.busy = false; fs.queue()
+    t.ok(fs.message.indexOf("rebuild is running") >= 0, "queue refused during a terminal's build: " + fs.message)
+    fs._stopWatching(); fs.card = null
+
+    // 4: our run finished while no panel watched: shown once, then acked.
+    fs.showingLog = false; fs.applyLog = []; fs._invocation = ""
+    fs._onStatus({ state: "succeeded", invocationId: id, ours: true, shown: false, exit: 0, result: "success" })
+    t.ok(fs.showingLog && !fs.applying && fs._reload.command.slice(-1)[0] === id, "an unseen result opens the log")
+    fs._onReloaded("building\n")
+    t.ok(tail(fs.applyLog) === "— applied —" && fs.applyLog[0] === "building", "applied, from the journal: " + fs.applyLog.join(" | "))
+
+    // 5: shown already, someone else's, or no unit: nothing.
+    var shown = [{ state: "succeeded", invocationId: id, ours: true, shown: true, exit: 0, result: "success" },
+                 { state: "failed", invocationId: other, ours: false, shown: false, exit: 1, result: "exit-code" },
+                 { state: "none", invocationId: "", ours: false, shown: false, exit: 0, result: "success" }]
+    for (var i = 0; i < shown.length; i++) {
+      fs.showingLog = false; fs.applyLog = []; fs._reload.command = []
+      fs._onStatus(shown[i])
+      t.ok(!fs.showingLog && fs.applyLog.length === 0 && !fs.applying, "nothing shown for " + JSON.stringify(shown[i]))
+    }
+
+    // 7: the launcher refuses: the error ends it, and the unit is asked again.
+    fs._startApply()
+    fs._applyLine("{\"error\":\"a rebuild is already running — l shows it\"}")
+    t.ok(!fs.applying && tail(fs.applyLog) === "— a rebuild is already running — l shows it —",
+         "already running: " + tail(fs.applyLog))
+    t.ok(fs._status.command.slice(-1)[0] === "apply-status", "then asks the unit: " + fs._status.command.join(" "))
+
     console.log("model: " + t.pass + " passed, " + t.fail + " failed")
     Qt.exit(t.fail === 0 ? 0 : 1)
   }

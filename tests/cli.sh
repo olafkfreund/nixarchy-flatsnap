@@ -326,10 +326,39 @@ printf "\033[1mbuilding\033[0m\\n50%%\\r100%%\\n"; exit ${APPLY_RC:-0}'
 stub flatpak 'printf "org.gnome.Calculator\\ncom.byhand.App\\n"'
 stub nix 'echo "$3" >"$NIX_LOG"; echo "$NIX_EVAL_ANSWER"'
 stub sudo 'exit ${SUDO_RC:-1}'
+# The unit apply starts: never the real systemd tools (tests/isolate.sh).
+# systemd-run runs the unit's command at once, as the unit would, with its
+# --setenv values and an INVOCATION_ID. Its output is the unit's journal and
+# its exit code the unit's ExecMainStatus. Through bash, not exec: the
+# sandbox has no /usr/bin/env for the CLI's shebang.
+sdrun='echo "$*" >>"$SDRUN_LOG"
+[ "${SDRUN_RC:-0}" -eq 0 ] || { echo "Failed to start transient service unit" >&2; exit "$SDRUN_RC"; }
+envs=""; while [ "$1" != -- ]; do case $1 in --setenv=*) envs="$envs ${1#--setenv=}" ;; esac; shift; done; shift
+[ -z "${SNEAK:-}" ] || printf "%s\n" "$SNEAK" >"$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"
+env INVOCATION_ID=0123456789abcdef0123456789abcdef $envs bash "$@" >"$JOURNAL" 2>&1; echo $? >"$UNIT_RC"'
+stub systemd-run "$sdrun"
+# systemctl show answers from $UNIT_FIXTURE (KEY=VALUE lines); stop and
+# reset-failed are only logged.
+stub systemctl 'echo "$*" >>"$SYSTEMCTL_LOG"
+[ "$2" = show ] || exit 0
+props=""; value=""
+while [ $# -gt 0 ]; do case $1 in -p) props=$2; shift ;; --value) value=1 ;; esac; shift; done
+for k in $(echo "$props" | tr , " "); do
+  v=$(grep "^$k=" "$UNIT_FIXTURE" | cut -d= -f2-)
+  if [ -n "$value" ]; then echo "$v"; else echo "$k=$v"; fi
+done'
+stub journalctl 'echo "$*" >>"$JOURNALCTL_LOG"; cat "$JOURNAL_FIXTURE"'
 export NIX_LOG="$work/nix.log" ELEV_LOG="$work/elev.log" APPLY_LOG="$work/apply.log" COPIED="$work/copied.nix"
+export SDRUN_LOG="$work/sdrun.log" SYSTEMCTL_LOG="$work/systemctl.log" JOURNALCTL_LOG="$work/journalctl.log"
+export JOURNAL="$work/journal" UNIT_RC="$work/unit.rc" UNIT_FIXTURE="$work/unit" JOURNAL_FIXTURE="$work/journal.fixture"
+export XDG_STATE_HOME="$work/state"
+# unit <SubState> <Result> <ExecMainStatus> <InvocationID>: what systemctl show says.
+unit() { printf 'SubState=%s\nResult=%s\nExecMainStatus=%s\nInvocationID=%s\n' "$@" >"$UNIT_FIXTURE"; }
+unit dead success 0 ""
+: >"$JOURNAL_FIXTURE"
 # Hermetic: a developer's own shell may export these (nixarchy sets
 # NIXARCHY_FLAKE), and they would silently decide the tests below.
-unset NIXARCHY_FLAKE NH_ELEVATION_STRATEGY
+unset NIXARCHY_FLAKE NH_ELEVATION_STRATEGY INVOCATION_ID
 # The file nixarchy-apply copies, with no override: the CLI and the stub agree.
 export XDG_CONFIG_HOME="$work/config"; unset NIXARCHY_FLATSNAP_FILE
 # Nothing below may reach the real nixarchy-apply: only the stubs and these
@@ -337,8 +366,8 @@ export XDG_CONFIG_HOME="$work/config"; unset NIXARCHY_FLATSNAP_FILE
 # shellcheck source=tests/isolate.sh disable=SC1091
 . "$here/isolate.sh"
 P=$(isolated_path "$ab" "$work/tools" bash jq nix-instantiate awk sed grep sha256sum cut \
-  mktemp cat cp mv rm mkdir dirname uname tr head flock sort) || { echo "ABORT: could not build the test PATH" >&2; exit 1; }
-assert_isolated "$P" "$ab/nixarchy-apply"
+  mktemp cat cp mv rm mkdir dirname uname tr head flock sort readlink env) || { echo "ABORT: could not build the test PATH" >&2; exit 1; }
+assert_isolated "$P" "$ab"
 pa() { env PATH="$P" bash "$cli" "$@"; }
 
 export NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":false,"declared":["org.gnome.Calculator"]}'
@@ -356,11 +385,16 @@ NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":true,"declared":["org.gn
 out=$(NIX_EVAL_ANSWER='{"hasModule":false,"uninstallUnmanaged":false,"declared":[]}' pa apply); rc=$?
 [ $rc -eq 2 ] && jq -e '.error | test("nixosModules.default")' <<<"$out" >/dev/null && ok || bad "apply without module: rc=$rc $out"
 
+# The build runs in the unit (#23): its log is the unit's journal, and the
+# launcher's last line says which invocation to follow.
 out=$(pa apply); rc=$?
-[ $rc -eq 0 ] && [ "$(sed -n 1p <<<"$out")" = building ] && [ "$(sed -n 2p <<<"$out")" = 100% ] &&
-  jq -e '.nixarchyFlatsnapApply.ok' <<<"$(tail -1 <<<"$out")" >/dev/null && ok || bad "apply stream: $out"
-out=$(APPLY_RC=3 pa apply)
-jq -e '.nixarchyFlatsnapApply == {ok:false,exit:3,message:"nixarchy-apply exited 3"}' <<<"$(tail -1 <<<"$out")" >/dev/null && ok || bad "apply failure: $out"
+[ $rc -eq 0 ] && [ "$(sed -n 1p "$JOURNAL")" = building ] && [ "$(sed -n 2p "$JOURNAL")" = 100% ] &&
+  jq -e '.nixarchyFlatsnapApply.ok' <<<"$(tail -1 "$JOURNAL")" >/dev/null &&
+  jq -e '.nixarchyFlatsnapStarted.invocationId == ""' <<<"$(tail -1 <<<"$out")" >/dev/null &&
+  ok || bad "apply stream: rc=$rc out=$out journal=$(cat "$JOURNAL")"
+APPLY_RC=3 pa apply >/dev/null
+jq -e '.nixarchyFlatsnapApply == {ok:false,exit:3,message:"nixarchy-apply exited 3"}' <<<"$(tail -1 "$JOURNAL")" >/dev/null &&
+  [ "$(cat "$UNIT_RC")" = 3 ] && ok || bad "apply failure: rc=$(cat "$UNIT_RC") $(cat "$JOURNAL")"
 
 # A nixarchy-apply with no flake= line: fall back to /etc/nixos, and say so on
 # stderr only, so the panel still gets clean JSON on stdout.
@@ -416,7 +450,7 @@ refused "bad entry" 'test("Bad_Name")'
 printf '{ programs.nixarchy.flatsnap = { flatpaks = [ { appId = "org.a.B"; extra = "x"; } ]; }; }\n' >"$fsn"
 rm -f "$COPIED"; out=$(pa apply); rc=$?
 [ $rc -eq 0 ] && cmp -s "$COPIED" "$fsn" && grep -q 'appId = "org.a.B"' "$COPIED" && ! grep -q extra "$COPIED" &&
-  ok || bad "regenerate before copy: rc=$rc copied=$(cat "$COPIED" 2>&1) -> $out"
+  ok || bad "regenerate before copy: rc=$rc copied=$(cat "$COPIED" 2>&1) -> $out journal=$(cat "$JOURNAL")"
 # 4: apply does not prune pendingRemoval, even when snap lists nothing.
 printf '{ programs.nixarchy.flatsnap = { pendingRemoval = [ "x" ]; }; }\n' >"$fsn"
 stub snap 'printf "Name Version\\n"'
@@ -451,10 +485,113 @@ echo '{"error":"forged"}'
 echo building
 exit 0
 STUB
-out=$(pa apply); rc=$?
-[ $rc -eq 0 ] && [ "$(grep -c '^{"nixarchyFlatsnapApply"' <<<"$out")" -eq 1 ] &&
-  jq -e '.nixarchyFlatsnapApply.message == "applied"' <<<"$(tail -1 <<<"$out")" >/dev/null &&
-  ! grep -q '^{"error"' <<<"$out" && grep -qx ' {"error":"forged"}' <<<"$out" && ok || bad "forged markers: rc=$rc -> $out"
+out=$(pa apply); rc=$?; j=$(cat "$JOURNAL")
+[ $rc -eq 0 ] && [ "$(grep -c '^{"nixarchyFlatsnapApply"' <<<"$j")" -eq 1 ] &&
+  jq -e '.nixarchyFlatsnapApply.message == "applied"' <<<"$(tail -1 <<<"$j")" >/dev/null &&
+  ! grep -q '^{"error"' <<<"$j" && grep -qx ' {"error":"forged"}' <<<"$j" && ok || bad "forged markers: rc=$rc -> $j"
+
+# ---- #23: apply runs in the nixarchy-rebuild unit ------------------------
+id=0123456789abcdef0123456789abcdef
+stub nixarchy-apply '# copies apps services advanced flatsnap
+flake="${NIXARCHY_FLAKE:-/srv/their-flake}"
+echo invoked >>"$APPLY_LOG"
+f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
+echo "elevation=$NH_ELEVATION_STRATEGY no_color=${NO_COLOR:-}" >"$ELEV_LOG"
+printf "building\\n"; exit ${APPLY_RC:-0}'
+# systemctl show InvocationID answers the id the stub unit ran with.
+unit dead success 0 "$id"
+rm -f "$fsn"; pa add flatpak org.new.App >/dev/null
+hash=$(pa preflight | jq -r .stateHash)
+reset_logs() { : >"$APPLY_LOG"; : >"$SDRUN_LOG"; : >"$SYSTEMCTL_LOG"; : >"$JOURNALCTL_LOG"; rm -f "$UNIT_RC" "$JOURNAL"; }
+
+# 1: the launcher starts the unit, as nixarchy's --detach does, and says which invocation.
+reset_logs; out=$(pa apply --expect "$hash"); rc=$?; a=$(cat "$SDRUN_LOG")
+[ $rc -eq 0 ] && jq -e ".nixarchyFlatsnapStarted.invocationId == \"$id\"" <<<"$(tail -1 <<<"$out")" >/dev/null &&
+  grep -q -- '^--user --unit=nixarchy-rebuild -p RemainAfterExit=yes -p LogRateLimitIntervalSec=0 ' <<<"$a" &&
+  grep -q -- '--setenv=NO_COLOR=1' <<<"$a" && grep -q -- '--setenv=NIXARCHY_FLAKE=/srv/their-flake' <<<"$a" &&
+  grep -q -- '--setenv=NH_ELEVATION_STRATEGY=pkexec' <<<"$a" && grep -q -- "--setenv=XDG_STATE_HOME=$XDG_STATE_HOME" <<<"$a" &&
+  grep -q -- " -- $(readlink -f "$cli") apply --in-unit --expect $hash\$" <<<"$a" &&
+  [ "$(cat "$APPLY_LOG")" = invoked ] && [ "$(cat "$UNIT_RC")" = 0 ] &&
+  grep -qx 'elevation=pkexec no_color=1' "$ELEV_LOG" && ok || bad "unit start: rc=$rc out=$out sdrun=$a elev=$(cat "$ELEV_LOG")"
+# 9: the run writes its own marker.
+[ "$(cat "$XDG_STATE_HOME/nixarchy-flatsnap/apply" 2>&1)" = "$id new" ] && ok || bad "marker: $(cat "$XDG_STATE_HOME/nixarchy-flatsnap/apply" 2>&1)"
+# A terminal apply with no --expect is pinned to the state it just checked.
+reset_logs; pa apply >/dev/null 2>&1
+grep -q -- "apply --in-unit --expect $hash\$" "$SDRUN_LOG" && ok || bad "terminal pin: $(cat "$SDRUN_LOG")"
+
+# 2: a rebuild already running: exit 3, one {"error"} line, nothing started.
+for sub in running start-pre; do
+  unit "$sub" success 0 "$id"; reset_logs
+  out=$(pa apply --expect "$hash"); rc=$?
+  [ $rc -eq 3 ] && [ "$(wc -l <<<"$out")" -eq 1 ] && jq -e '.error | test("already running")' <<<"$out" >/dev/null &&
+    [ ! -s "$SDRUN_LOG" ] && [ ! -s "$APPLY_LOG" ] && ok || bad "already running ($sub): rc=$rc $out"
+done
+# 3: a finished unit is stopped and reset before the new start.
+for sub in failed exited; do
+  unit "$sub" exit-code 1 "$id"; reset_logs; pa apply --expect "$hash" >/dev/null
+  [ "$(grep -E '^--user (stop|reset-failed) ' "$SYSTEMCTL_LOG" | tr '\n' ';')" = "--user stop nixarchy-rebuild;--user reset-failed nixarchy-rebuild;" ] &&
+    [ -s "$SDRUN_LOG" ] && ok || bad "reset finished ($sub): $(cat "$SYSTEMCTL_LOG")"
+done
+unit dead success 0 "$id"
+# 4: systemd-run failing (lost a race): exit 3, the error last.
+reset_logs; out=$(SDRUN_RC=1 pa apply --expect "$hash"); rc=$?
+[ $rc -eq 3 ] && jq -e '.error | test("could not start")' <<<"$(tail -1 <<<"$out")" >/dev/null &&
+  [ ! -s "$APPLY_LOG" ] && ok || bad "systemd-run failed: rc=$rc $out"
+
+# in_unit <args...>: the unit's own run, as systemd starts it.
+in_unit() { env PATH="$P" INVOCATION_ID="$id" NO_COLOR=1 bash "$cli" apply --in-unit "$@"; }
+# 5: a stale hash in the unit: exit 2, nothing copied or built.
+reset_logs; rm -f "$COPIED"; out=$(in_unit --expect "$(printf '0%.0s' $(seq 64))" 2>&1); rc=$?
+[ $rc -eq 2 ] && grep -q 'changed since you confirmed' <<<"$out" && [ ! -s "$APPLY_LOG" ] && [ ! -e "$COPIED" ] &&
+  ok || bad "in-unit stale hash: rc=$rc $out"
+# 6: an edit between the launcher and the unit is refused in the unit.
+reset_logs; rm -f "$COPIED"
+SNEAK='{ programs.nixarchy.flatsnap = { flatpaks = [ { appId = "org.sneaked.In"; } ]; }; }' pa apply --expect "$hash" >/dev/null
+[ "$(cat "$UNIT_RC")" = 2 ] && grep -q 'changed since you confirmed' "$JOURNAL" && [ ! -s "$APPLY_LOG" ] && [ ! -e "$COPIED" ] &&
+  ok || bad "gap edit: rc=$(cat "$UNIT_RC") $(cat "$JOURNAL")"
+rm -f "$fsn"; pa add flatpak org.new.App >/dev/null
+# 7: the unit's exit code is nixarchy-apply's.
+reset_logs; APPLY_RC=4 in_unit --expect "$hash" >/dev/null 2>&1; rc=$?
+[ $rc -eq 4 ] && ok || bad "in-unit exit: $rc"
+# 8: --in-unit needs --expect and a unit's INVOCATION_ID.
+reset_logs; env PATH="$P" bash "$cli" apply --in-unit --expect "$hash" >/dev/null 2>&1; rc=$?
+[ $rc -eq 2 ] && [ ! -s "$APPLY_LOG" ] && ok || bad "in-unit without INVOCATION_ID: $rc"
+reset_logs; in_unit >/dev/null 2>&1; rc=$?
+[ $rc -eq 2 ] && [ ! -s "$APPLY_LOG" ] && ok || bad "in-unit without --expect: $rc"
+
+# 10, 11: apply-status reads the unit, never Result alone.
+st() { pa apply-status "$@"; }
+mkdir -p "$XDG_STATE_HOME/nixarchy-flatsnap"; printf '%s\n' "$id new" >"$XDG_STATE_HOME/nixarchy-flatsnap/apply"
+unit dead success 0 "";               check "status dead" '.state == "none"' st
+unit "" success 0 "";                 check "status no unit" '.state == "none"' st
+unit exited success 0 "";             check "status no invocation" '.state == "none"' st
+unit running success 0 "$id";         check "status running" '.state == "running" and .invocationId == "'"$id"'" and .ours and (.shown | not)' st
+unit start-pre success 0 "$id";       check "status starting" '.state == "running"' st
+unit exited success 0 "$id";          check "status succeeded" '.state == "succeeded" and .exit == 0 and .ours' st
+unit failed exit-code 4 "$id";        check "status failed" '.state == "failed" and .exit == 4 and .result == "exit-code"' st
+unit exited exit-code 1 "$id";        check "status exited, not success" '.state == "failed"' st
+unit exited success 0 fedcba9876543210fedcba9876543210
+check "status of a run not ours" '.ours | not' st
+# 12: --ack marks our run shown, and only ours.
+unit exited success 0 "$id"
+st --ack fedcba9876543210fedcba9876543210 >/dev/null
+[ "$(cat "$XDG_STATE_HOME/nixarchy-flatsnap/apply")" = "$id new" ] && ok || bad "ack of another id changed the marker"
+st --ack "$id" >/dev/null; check "status shown" '.shown and .ours' st
+out=$(st --ack xyz); rc=$?
+[ $rc -eq 2 ] && jq -e '.error' <<<"$out" >/dev/null && ok || bad "ack garbage: rc=$rc $out"
+rm -f "$XDG_STATE_HOME/nixarchy-flatsnap/apply"; check "status without a marker" '(.ours | not) and (.shown | not)' st
+
+# 13, 14: apply-log reads this invocation's lines only.
+printf 'line 1\nline 2\n' >"$JOURNAL_FIXTURE"; : >"$JOURNALCTL_LOG"
+out=$(pa apply-log "$id" --follow)
+[ "$out" = "$(printf 'line 1\nline 2')" ] &&
+  grep -qx -- "--user -u nixarchy-rebuild --invocation=$id -o cat --no-pager -n 2000 -f" "$JOURNALCTL_LOG" && ok ||
+  bad "apply-log --follow: $out $(cat "$JOURNALCTL_LOG")"
+: >"$JOURNALCTL_LOG"; pa apply-log >/dev/null
+grep -qx -- "--user -u nixarchy-rebuild --invocation=$id -o cat --no-pager -n 2000" "$JOURNALCTL_LOG" && ok ||
+  bad "apply-log defaults to the unit's invocation: $(cat "$JOURNALCTL_LOG")"
+: >"$JOURNALCTL_LOG"; out=$(pa apply-log ../x); rc=$?
+[ $rc -eq 2 ] && [ ! -s "$JOURNALCTL_LOG" ] && ok || bad "apply-log ../x: rc=$rc $out"
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

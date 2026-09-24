@@ -21,7 +21,7 @@ confirmation, and applying (build log shortened) are on
 | Piece | What it does |
 |---|---|
 | **Panel** (`nixarchy.flatsnap`) | *Install → Flatpak & Snap* in the Omarchy menu. Paste, look up, queue, apply. |
-| **`nixarchy-flatsnap`** | The CLI behind the panel: `resolve`, `search`, `list`, `add`, `rm`, `preflight`, `apply`. JSON out. |
+| **`nixarchy-flatsnap`** | The CLI behind the panel: `resolve`, `search`, `list`, `add`, `rm`, `preflight`, `apply`, `apply-status`, `apply-log`. JSON out. |
 | **NixOS module** | Turns `~/.config/nixarchy/flatsnap.nix` into `services.flatpak.packages` and, for Snaps, [nix-snapd](https://github.com/nix-community/nix-snapd) plus a reconciler unit. |
 
 ## What you can paste
@@ -66,6 +66,15 @@ tool writes: a `flatsnap.nix` edited outside its shape, or with an entry
 `add` would refuse, is refused before anything is built. The file is then
 rewritten from what was checked, so anything else in it is dropped. Comments
 you added by hand are dropped too.
+
+The build runs in the user unit `nixarchy-rebuild`, the one
+`nixarchy-apply --detach` uses, not inside the shell. Restarting or
+closing the shell does not stop it. When you reopen the panel it shows the
+running build, or shows once how a build you started ended. While any
+rebuild runs, including one started from a terminal, a second apply is
+refused, and queuing and removing wait. To follow it from a terminal, run
+`nixarchy-flatsnap apply-log --follow`. `nixarchy-flatsnap apply-status`
+reports its state.
 
 ## Install
 
