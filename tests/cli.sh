@@ -183,6 +183,14 @@ printf '#!/bin/sh\nprintf "Name Version\\n"\n' >"$work/fakebin/snap"
 PATH="$work/fakebin:$PATH" run rm flatpak org.gnome.Calculator >/dev/null
 grep -q pendingRemoval "$NIXARCHY_FLATSNAP_FILE" && bad "not pruned once gone" || ok
 
+# snap present but not answering (snapd down): unknown, not "none installed" (#13 C3, C8).
+rm -f "$NIXARCHY_FLATSNAP_FILE"
+run add snap hello-world >/dev/null; run rm snap hello-world >/dev/null; run add snap code >/dev/null
+printf '#!/bin/sh\necho "error: cannot communicate with server" >&2\nexit 1\n' >"$work/fakebin/snap"
+PATH="$work/fakebin:$PATH" run add flatpak org.gnome.Calculator >/dev/null
+grep -q 'pendingRemoval = \[ "hello-world" \];' "$NIXARCHY_FLATSNAP_FILE" && ok || bad "pruned on a failing snap: $(cat "$NIXARCHY_FLATSNAP_FILE")"
+check "failing snap is unknown" '(.[] | select(.id=="code") | .installed) == null' env PATH="$work/fakebin:$PATH" bash "$cli" list
+
 # ---- the reconciler, against a stub snap with state ----------------------
 rec="$here/../bin/nixarchy-flatsnap-reconcile"
 db="$work/snapdb"; export db
@@ -266,6 +274,12 @@ stub nixarchy-apply 'exit 0'
 out=$(pa preflight 2>"$work/err"); rc=$?
 [ $rc -eq 0 ] && jq -e '.ok' <<<"$out" >/dev/null && grep -q 'could not read the flake path' "$work/err" &&
   grep -q '^/etc/nixos#' "$NIX_LOG" && ok || bad "flake fallback: rc=$rc out=$out err=$(cat "$work/err") nix=$(cat "$NIX_LOG")"
+
+# A flatpak that fails: preflight cannot say what apply would remove, so it
+# refuses rather than report nothing (#13 C8).
+stub flatpak 'exit 1'
+out=$(pa preflight); rc=$?
+[ $rc -eq 2 ] && jq -e '.error | test("could not list installed Flatpaks")' <<<"$out" >/dev/null && ok || bad "preflight on failing flatpak: rc=$rc $out"
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

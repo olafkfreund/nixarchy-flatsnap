@@ -277,10 +277,11 @@ write_state() {
   local f tmp st; f=$(file)
   st=$(cat)
   # A pending removal that snap no longer lists is done: drop it, so the
-  # next apply can turn snapd off. Without snap on PATH, keep them all.
-  if command -v snap >/dev/null; then
-    st=$(jq -c --argjson i "$(snap list 2>/dev/null | awk 'NR > 1 {print $1}' | jq -Rsc 'split("\n") | map(select(. != ""))')" \
-      '.pendingRemoval |= map(select(. as $n | $i | index($n) != null))' <<<"$st")
+  # next apply can turn snapd off. Only on a real answer: with snap absent,
+  # or present but not answering (snapd down), keep them all.
+  local sn
+  if sn=$(installed_ids snap) && [ "$sn" != null ]; then
+    st=$(jq -c --argjson i "$sn" '.pendingRemoval |= map(select(. as $n | $i | index($n) != null))' <<<"$st")
   fi
   mkdir -p "$(dirname "$f")"
   tmp=$(mktemp "$f.XXXXXX")
@@ -293,15 +294,25 @@ write_state() {
   fi
 }
 
+# Installed IDs as a JSON array; `null` when the tool is absent; exit 1 when
+# it is there but could not be asked (snapd down, a flatpak error). Callers
+# must not read a failure as "nothing installed".
+installed_ids() {
+  command -v "$1" >/dev/null || { echo null; return 0; }
+  local out
+  case $1 in
+    flatpak) out=$(flatpak list --app --columns=application 2>/dev/null) || return 1 ;;
+    snap) out=$(snap list 2>/dev/null | awk 'NR > 1 {print $1}') || return 1 ;;
+  esac
+  jq -Rsc 'split("\n") | map(select(. != ""))' <<<"$out"
+}
+
 installed() {
-  # null, not false, when the tool is absent: "unknown" is not "missing".
-  local fp=null sn=null
-  if command -v flatpak >/dev/null; then
-    fp=$(flatpak list --app --columns=application 2>/dev/null | jq -Rsc 'split("\n") | map(select(. != ""))')
-  fi
-  if command -v snap >/dev/null; then
-    sn=$(snap list 2>/dev/null | awk 'NR > 1 {print $1}' | jq -Rsc 'split("\n") | map(select(. != ""))')
-  fi
+  # null, not false, when the tool is absent or not answering: "unknown" is
+  # not "missing".
+  local fp sn
+  fp=$(installed_ids flatpak) || fp=null
+  sn=$(installed_ids snap) || sn=null
   jq -cn --argjson fp "$fp" --argjson sn "$sn" '{flatpak: $fp, snap: $sn}'
 }
 
@@ -413,10 +424,8 @@ cmd_preflight() {
       declared = map (p: if builtins.isString p then p else p.appId)
         (c.config.services.flatpak.packages or [ ]);
     }' 2>/dev/null) || die "could not evaluate nixosConfigurations.$host in $(flake)"
-  fp='[]'
-  if command -v flatpak >/dev/null; then
-    fp=$(flatpak list --app --columns=application 2>/dev/null | jq -Rsc 'split("\n") | map(select(. != ""))')
-  fi
+  fp=$(installed_ids flatpak) || die "could not list installed Flatpaks, so preflight cannot say what apply would remove"
+  [ "$fp" != null ] || fp='[]'   # no flatpak: nothing installed to remove
   jq -cn --argjson e "$ev" --argjson fp "$fp" --arg host "$host" '
     {
       ok: $e.hasModule,
