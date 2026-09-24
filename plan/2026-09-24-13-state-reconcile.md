@@ -261,5 +261,35 @@ passes.
 
 ## Deviations / results
 
-(Filled in during implementation: the step 1 results, the branch taken, and
-any change to a step.)
+### Step 1: razer check (2026-09-24, about 12:50–13:05Z)
+
+The full evidence is on #13
+(https://github.com/olafkfreund/nixarchy-flatsnap/issues/13#issuecomment-5814448316).
+
+- **Branch taken: C6 is in scope, so step 9 runs.** No separate issue was
+  opened. `node` (default track `24`, no `latest/stable` on amd64) was
+  installed by the reconciler as `24/stable`. On each of two later runs with
+  no changes, the reconciler logged `refresh node -> stable` and snap
+  answered "no updates available".
+- **D4 assumption confirmed; steps 6 and 7 go ahead as written.**
+  `snap install --classic hello-world` printed "Warning: flag --classic
+  ignored for strictly confined snap hello-world", exited 0, and
+  `snap list` shows Notes `-`.
+- **C5 seen live.** `resolve https://snapcraft.io/node` gives
+  `channel: "stable"` with `channels: ["edge"]`, because `lookup_snap` only
+  reads the `latest` track. Step 9's `lookup_snap` fallback has a real
+  example: `node` has a `latest` track, but only `edge` is on it, and
+  `stable` is on `24`.
+- **Deviation from step 1.4.** "Apply" was not `nixarchy-flatsnap apply`.
+  I built a `/tmp` clone of nixos_config main (cc89f44b9, flatsnap input
+  09fe804, reconciler identical to main) that declares `node`, and activated
+  it with `switch-to-configuration test`. That first activation was
+  reconciler run 1. Runs 2 and 3 were `systemctl restart
+  nixarchy-flatsnap-snaps`. A no-change apply does not restart this oneshot
+  unit (its `ExecStart` is unchanged), so in production the extra refresh
+  happens on every boot and on every switch that changes the snap plan, not
+  on every apply. Step 9's re-check on razer uses the same restart method.
+- **Razer afterwards.** Razer is on generation 2949 (`/run/current-system`
+  `…43x4a2bh…-6774f7b`), with 0 failed units, both test snaps purged,
+  `managed` empty, and snapd inactive. The core24 mount this test added was
+  unmounted. The generation was posted on the bus.
