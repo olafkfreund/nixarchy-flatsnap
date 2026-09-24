@@ -494,27 +494,57 @@ flake() {
 #   - is the module imported? Without it, the copied flatsnap.nix names
 #     options that do not exist, and the rebuild fails on evaluation.
 #   - with uninstallUnmanaged on, which installed Flatpaks will be removed?
+#   - what changes against the flake's copy, i.e. since the last apply?
+# The file is checked first, so a hand edit is refused before any prompt.
 cmd_preflight() {
   local host ev fp
   host=$(uname -n)
   command -v nixarchy-apply >/dev/null || die "nixarchy-apply not found: is this nixarchy?"
+  load_state
+  check_entries
   ev=$(nix eval --json "$(flake)#nixosConfigurations.\"$host\"" --apply '
-    c: {
+    c: let f = c.config.programs.nixarchy.flatsnap or { }; in {
       hasModule = (c.options.programs.nixarchy or { }) ? flatsnap;
       uninstallUnmanaged = c.config.services.flatpak.uninstallUnmanaged or false;
       declared = map (p: if builtins.isString p then p else p.appId)
         (c.config.services.flatpak.packages or [ ]);
+      current = {
+        flatpaks = map (p: { inherit (p) appId overrides; }) (f.flatpaks or [ ]);
+        snaps = map (s: { inherit (s) name channel classic; }) (f.snaps or [ ]);
+      };
     }' 2>/dev/null) || die "could not evaluate nixosConfigurations.$host in $(flake)"
   fp=$(installed_ids flatpak) || die "could not list installed Flatpaks, so preflight cannot say what apply would remove"
   [ "$fp" != null ] || fp='[]'   # no flatpak: nothing installed to remove
-  jq -cn --argjson e "$ev" --argjson fp "$fp" --arg host "$host" '
-    {
+  jq -cn --argjson e "$ev" --argjson fp "$fp" --arg host "$host" --argjson st "$STATE" --arg hash "$(state_hash)" '
+    def fps: map({key: .appId, value: (.overrides // {})}) | from_entries;
+    def sns: map({key: .name, value: {channel: (.channel // "stable"), classic: (.classic // false)}}) | from_entries;
+    ($e.current // {flatpaks: [], snaps: []}) as $cur
+    | ($st.flatpaks | fps) as $nf | ($cur.flatpaks | fps) as $of
+    | ($st.snaps | sns) as $ns | ($cur.snaps | sns) as $os
+    | {
       ok: $e.hasModule,
       message: (if $e.hasModule then "ready"
         else "the flatsnap module is not in nixosConfigurations.\($host): add inputs.nixarchy-flatsnap.nixosModules.default to its modules" end),
-      willRemove: (if $e.uninstallUnmanaged then $fp - $e.declared else [] end)
+      willRemove: (if $e.uninstallUnmanaged then $fp - $e.declared else [] end),
+      changes: [
+        ($nf | keys[] | select(. as $k | $of | has($k) | not) | {op: "add", store: "flatpak", id: ., detail: ""}),
+        ($ns | keys[] | select(. as $k | $os | has($k) | not) | {op: "add", store: "snap", id: ., detail: ""}),
+        ($of | keys[] | select(. as $k | $nf | has($k) | not) | {op: "remove", store: "flatpak", id: ., detail: ""}),
+        ($os | keys[] | select(. as $k | $ns | has($k) | not) | {op: "remove", store: "snap", id: ., detail: ""}),
+        ($nf | keys[] | select(. as $k | ($of | has($k)) and $of[$k] != $nf[$k])
+          | {op: "change", store: "flatpak", id: ., detail: "overrides changed"}),
+        ($ns | keys[] | select(. as $k | ($os | has($k)) and $os[$k] != $ns[$k]) | . as $k
+          | {op: "change", store: "snap", id: $k, detail: ([
+              (if $os[$k].channel != $ns[$k].channel then "channel \($os[$k].channel) → \($ns[$k].channel)" else empty end),
+              (if $os[$k].classic != $ns[$k].classic then (if $ns[$k].classic then "classic on" else "classic off" end) else empty end)
+            ] | join(", "))})
+      ],
+      stateHash: $hash
     }'
 }
+
+# What apply --expect compares: the parsed state, keys sorted.
+state_hash() { jq -cS . <<<"$STATE" | sha256sum | cut -c1-64; }
 
 # Copy the selection into the flake and rebuild -- through nixarchy-apply,
 # never around it. Streaming and the pkexec choice follow nixarchy-pkg's

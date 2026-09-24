@@ -350,5 +350,22 @@ stub flatpak 'exit 1'
 out=$(pa preflight); rc=$?
 [ $rc -eq 2 ] && jq -e '.error | test("could not list installed Flatpaks")' <<<"$out" >/dev/null && ok || bad "preflight on failing flatpak: rc=$rc $out"
 
+# ---- #10: apply builds only the checked state ----------------------------
+stub flatpak 'printf "org.gnome.Calculator\\ncom.byhand.App\\n"'
+stub nixarchy-apply '# copies apps services advanced flatsnap
+echo invoked >>"$APPLY_LOG"
+f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
+printf "building\\n"; exit ${APPLY_RC:-0}'
+fsn="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"
+export NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":false,"declared":[],"current":{"flatpaks":[{"appId":"org.old.App","overrides":{}}],"snaps":[{"name":"code","channel":"stable","classic":false}]}}'
+
+# 8: preflight says what changes since the flake's copy, and hashes the state.
+rm -f "$fsn"; pa add flatpak org.new.App >/dev/null; pa add snap code --channel edge >/dev/null
+check "preflight changes" '.changes == [
+    {op:"add",store:"flatpak",id:"org.new.App",detail:""},
+    {op:"remove",store:"flatpak",id:"org.old.App",detail:""},
+    {op:"change",store:"snap",id:"code",detail:"channel stable → edge"}]
+  and (.stateHash | test("^[0-9a-f]{64}$"))' pa preflight
+
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -222,6 +222,16 @@ numbers are only a guide.
    → verify by: cli.sh case 8. `preflight ready` and the `willRemove` case
    still pass, with `current` added to their `NIX_EVAL_ANSWER`.
 
+   *As implemented:*
+   - **Missing `current`.** Preflight treats a missing `current` as empty, so
+     the existing cases' `NIX_EVAL_ANSWER` is left as it was.
+   - **Case 8 lands here.** It is added to `tests/cli.sh` in this step, not
+     in step 9, because it is this step's verification.
+   - **`state_hash()`** is a helper, so preflight and apply hash the same way.
+   - **The `--apply` expression** was evaluated against two fake
+     configurations, one without the module and one with it, before use.
+   - `checks.cli`: 111 passed.
+
 6. **`bin/nixarchy-flatsnap`: `cmd_apply`.** In order:
    1. parse `--expect <hash>` (refuse any other argument, exit 2);
    2. the file-identity check;
