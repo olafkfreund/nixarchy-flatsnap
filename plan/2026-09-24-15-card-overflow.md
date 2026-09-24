@@ -315,3 +315,53 @@ nix flake check -L    # no-text-multiplier, no-hardcoded-colours, shellcheck, ch
 - **On razer:** step 14. It returns to the starting generation, deletes
   only this run's generation, removes `hello-world` and `/tmp/flake-15`,
   and restores the monitor scale and the shell's environment.
+
+## Live check on razer, first attempt (2026-09-24): not completed
+
+razer was reserved by the user for this run, and the claim was posted on
+the bus (`$XxbDi3bM…`) and acknowledged. The run was still disrupted from
+outside during setup, so per the one-attempt rule it stopped before step 12's
+checks. Nothing in steps 12-13 was verified. Step 14 (restore) ran.
+
+- **Setup (done).**
+  - `/tmp/flake-15` on razer was a clone of nixos_config 20b655c24, the
+    source of generation 2954. It had
+    `programs.nixarchy.flake = lib.mkForce "/tmp/flake-15"`, and the
+    `nixarchy-flatsnap` node's `locked` in `flake.lock` was set to PR head
+    5db4884.
+  - It was built on razer. `nix store diff-closures` against 2954 showed
+    only `nixarchy-flatsnap`, and the plugin's `Menu.qml` has `scrollBy`.
+  - `switch-to-configuration test` moved the plugin link to `c8ij6xc1…`.
+- **Setup gotchas, for the next run.**
+  - `nix flake lock --override-input nixarchy/nixarchy-flatsnap …` drops
+    the node's `follows` (nixpkgs, nix-flatpak) and pulls a second
+    nixpkgs. Patching only `.nodes["nixarchy-flatsnap"].locked` (rev,
+    lastModified, and narHash from `nix flake prefetch --json`) keeps them.
+  - `omarchy-launch-shell` is a relaunch loop ("Omarchy shell exited with
+    status 143; relaunching"). Killing the quickshell pid relaunches it with
+    the loop's old environment (`NIXARCHY_FLAKE=/etc/nixos`). The relaunch
+    has to kill the `omarchy-launch-shell` bash parent first, then exec the
+    new one with `NIXARCHY_FLAKE=/tmp/flake-15`.
+- **Disruption.**
+  - At 20:25:30 BST, four ssh sessions that were not ours opened within
+    one second.
+  - `~/.config/omarchy/plugins/nixarchy.distrobox` was rewritten as a real
+    directory (mtime 20:25:30.913), and about 40 "Local plugin changed:
+    nixarchy.distrobox" reloads followed.
+  - At 20:25:31.04 the shell logged `Exiting due to IPC request`, and a new
+    `omarchy-launch-shell` started with `NIXARCHY_FLAKE=/etc/nixos`.
+  - This is the same signature as #22's third attempt (a distrobox rewrite
+    and an IPC exit).
+- **Restore (done, verified by end state).**
+  - `switch-to-configuration switch` of system-2954-link. No generation was
+    made, so none needed deleting.
+  - The plugin link is back on `ziwc8…`, and one shell runs with
+    `NIXARCHY_FLAKE=/etc/nixos`.
+  - eDP-1 stayed at 1920x1080, scale 1 (it was never changed).
+  - `/tmp/flake-15` is removed. No `flatsnap.nix`, snap or apply.
+  - 0 failed units, system and user. "done" was posted on the bus
+    (`$p83lBY9z…`).
+- **What the next run needs.** A user reservation plus a bus claim was not
+  enough. Whatever rewrites `nixarchy.distrobox` and restarts the shell has
+  to be found and stopped first. The same run could then use the corrected
+  shell relaunch above.
