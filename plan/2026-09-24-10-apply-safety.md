@@ -371,8 +371,31 @@ numbers are only a guide.
       generation 2952 at 17:21:55, unannounced, during the claim. That ended
       the `test` activation. No generation had been made, and the test
       `flatsnap.nix` was removed.
-    - **Checks 1, 3 and 4** are to be redone against the new baseline, after
-      the queued razer work.
+    - **Second run**, against generation 2952 (clone of nixos_config
+      9952a536, the 2952 source), at ~17:53–17:57:
+      - **Check 4: PASSED live.** Right after `a`, the message line read
+        `checking…`, with the `…` busy marker on the tab line.
+      - **Check 1, preview half: PASSED live.** `hello-world` (snap, stable)
+        was queued, and the first `a` showed `+ hello-world` /
+        `a again applies; any other key cancels`, with no apply started.
+      - **Check 1, apply half, and check 3: NOT completed.** About 15 s after
+        the second `a`, `omarchy-shell` got `Exiting due to IPC request` (an
+        external `quickshell kill` at 17:56:41, not sent by this run). That
+        killed the running apply before `nixarchy-apply` copied anything:
+        the clone and the real flake were both untouched, and no generation
+        was made. Per the lead's rule (no third try), razer was restored to
+        2952 with 0 failed units, and the run stopped there.
+    - **Finding.** razer's session exports `NIXARCHY_FLAKE=/etc/nixos`, and
+      the shell inherits it. That beats `programs.nixarchy.flake` baked into
+      nixarchy-apply, so a `test` activation alone is not enough: the shell
+      must be relaunched with `NIXARCHY_FLAKE` set to the clone. Preflight
+      caught the mismatch, refusing with "the flatsnap module is not in
+      nixosConfigurations.razer" before anything was written.
+    - **Still unproven live:** the real build ending in `— applied —`;
+      `rebuilding… l shows it` after Esc; `l`; reopening on the log; `d` and
+      Enter refused during a build. `tests/model.qml` covers these (cases
+      1–7), and `tests/cli.sh` covers the apply path against the stub
+      nixarchy-apply.
 
 12. **PR.** Open the PR against `main`, linking
     `intent/2026-09-24-10-apply-safety.md`,
