@@ -361,3 +361,129 @@ razer only.
     and can be removed.
   - `flatsnap.nix` keeps its format.
 - **On razer:** the restore in step 9.
+
+## Live check on razer (#23, #22, #33), 2026-09-24 22:16–22:35 BST
+
+One combined session, run once. The user reserved razer and suspended
+p620-a1c969's #25 claim for the window. The claim is bus `$rGk1os6Z…` and
+"done" is `$sqS4aObZ…`. Nothing from outside disrupted the run.
+
+- **Setup.**
+  - `/tmp/flake-23` was nixos_config 20b655c24. Unchanged, it evaluates to
+    razer's gen 2954 toplevel (`06kpcydy…`).
+  - Only the `nixarchy-flatsnap` node's `locked` entry was edited, to
+    point at 64c9c94.
+  - `programs.nixarchy.flake` was forced to `/tmp/flake-23`.
+  - Built on p620 (`qivj46ks…`). `diff-closures` against 2954 showed only
+    `nixarchy-flatsnap`.
+  - `nix copy --no-check-sigs` to razer. Without the flag, the copy failed
+    with "lacks a signature by a trusted key".
+  - `switch-to-configuration test`: the plugin link moved to `8dx0n9s5…`,
+    and nixarchy-apply's fallback flake is `/tmp/flake-23`.
+  - Shell relaunch: the `omarchy-launch-shell` loop was killed first, then
+    the shell was started through `hyprctl dispatch` with
+    `NIXARCHY_FLAKE=/tmp/flake-23`.
+  - `pgrep -f quickshell-wrapped_` also matches the ssh command that runs
+    it. Use `pgrep -x .quickshell-wra`.
+- **Driving.** wtype and grim over ssh, with the shell's own
+  environment, and `omarchy-shell shell toggle nixarchy.flatsnap`.
+
+### (A) #23
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| Real apply through the `nixarchy-rebuild` unit ends "applied" | **pass** | See the notes below. |
+| Elevation from the user unit | **pass (passwordless)**. pkexec **unverified** | razer's `sudo -n true` succeeds, so apply chose `passwordless`. The journal shows `NH_ELEVATION_STRATEGY=passwordless` and root sudo sessions for the `test` and `boot` steps. pkexec from a user unit is a follow-up issue, opened after merge (user decision). |
+| Shell restart during the build | **pass** | See the notes below. |
+| A result that finished while no panel watched is shown exactly once | **pass, with a method note** | See the notes below. |
+| "Already running" | **pass** | `nixarchy-flatsnap apply --expect 000…0` during the build answered `rc=3 {"error":"a rebuild is already running — l shows it"}`. Nothing was started. `nixarchy-apply --detach` was not used (user decision). |
+
+- **Real apply.**
+  - Invocation `a758f52a…`: `a a` at 22:23:18, and the unit ended at
+    ~22:24:33 with `SubState=exited Result=success ExecMainStatus=0`.
+  - The panel log ended `— applied —`.
+  - Gen 2955 was built from `/tmp/flake-23`: the copies were staged there,
+    `flatsnap.nix` was added, snapd became active, and hello-world was
+    installed.
+- **Shell restart during the build.**
+  - `omarchy-restart-shell` at 22:24:09. The shell pid went 2604299 →
+    2627755, and the unit stayed `running`.
+  - The reopened panel opened on the log. Scrolled to the top, the log
+    starts with the unit's first line (`Started [systemd-run] …
+    apply --in-unit --expect b24d…`), so it was reloaded from the
+    journal.
+  - The relaunched shell had `NIXARCHY_FLAKE=/etc/nixos`. The build was
+    not affected, because the flake reached the unit through `--setenv`.
+- **Finished while no panel watched.**
+  - The natural sequence did not happen. The switch's Hyprland reload had
+    already closed the panel (nixarchy#919), so the "close" toggle
+    reopened it, and the watcher ended the run itself: `— applied —`,
+    marker `a758f52a… shown`.
+  - The unseen-result path was then exercised against the real, finished
+    unit and CLI:
+    1. With the panel closed, the marker was set back to
+       `a758f52a… new`.
+    2. The first reopen showed the log from the journal, ending
+       `— applied —`, and the marker went to `shown`.
+    3. The second reopen showed nothing, with `l log` offered.
+  - Only the marker reset was simulated.
+
+### (B) #22
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| The real apply ends `— applied —` | **pass** | As in (A). |
+| Esc during the build keeps it running | **pass** | The tab line shows `rebuilding… l shows it`, and the unit stays `running`. |
+| `l` brings the log back | **pass** | |
+| Close and reopen shows the running apply | **pass** | The panel reopened on the log with the build still running. |
+| `d` refused | **pass** | "a rebuild is running — wait for it to finish". |
+| Enter (queue) refused | **not verified** | The lookup did not bring up a card before the second Enter. The message on screen may have been left over from `d`. `flatsnap.nix` was unchanged. The model tests cover it; live, it stays open. |
+
+### (C) #33 (#15's deferred checks)
+
+| Check | Result |
+|-------|--------|
+| Scale 2: the card scrolls with j, k, Up, Down, PgUp and PgDn (Down = one line; PgUp back to the top) | **pass** |
+| The "↓ more (j)" marker, hidden at the bottom | **pass** |
+| A new card (`code`) opens at the top after the old card was scrolled | **pass** |
+| `p` scrolls the overrides field into view with the keyboard in it; `j` types `j`; Up leaves the field and scrolls; then `j` scrolls | **pass** |
+| PgUp and PgDn from inside the overrides field | **pass** |
+| Scroll keys keep an armed queue confirmation ("Enter again: … Context.shared=network"); `c` disarms it | **pass** |
+| The list keeps the cursor row visible at scale 2 (Ctrl+F "editor", j ×16) | **pass**, no `positionViewAtIndex` needed |
+| The footer shows only the current view's keys (add, card flatpak and snap, declared, log) | **pass** |
+| Scale 1: no marker when the card fits; shorter footers | **pass** |
+| The log follows only at the end, and the scroll keys work during a real apply | **not verified** |
+
+The log-follow check could not be judged. While the build ran, the log was
+shorter than the view: the evaluation printed only a few lines, and the
+build took ~75 s. So scrolling up had nothing to hold against. After the
+end, PgUp to the top of the long log works, and the marker shows.
+
+Also seen, all cosmetic and none from this task:
+
+- At scale 2, the footer wraps.
+- At scale 2, the armed red message covers the card's last line.
+- In the Add view the footer offers `l log`, but the field has the keys,
+  so `l` types an `l`.
+- The log footer still says "the build carries on" after the build has
+  ended.
+
+### Restore (verified by end state)
+
+- **Generation.** `switch-to-configuration switch` of system-2954-link.
+  Then the profile was switched back to 2954, gen 2955 was deleted, and
+  `boot` ran. The profile is `system-2954-link`, and `/run/current-system`
+  is `06kpcydy…`.
+- **Plugin and shell.** The plugin link is back on `ziwc8…`. One shell is
+  running, relaunched through `hyprctl` with `NIXARCHY_FLAKE=/etc/nixos`,
+  with one `omarchy-launch-shell`. eDP-1 is 1920x1080 at scale 1.
+- **Snaps.**
+  - `snap remove --purge hello-world`.
+  - Mistake: `core` was removed too, but it pre-existed (it was not in
+    this run's snap change 50). It was reinstalled at the same rev 17292.
+  - The other snaps and their mounts (active since 2026-09-23) are
+    untouched.
+- **Files and unit.** `flatsnap.nix` and its lock, the marker directory,
+  `/tmp/flake-23` and the helper files are removed. The unit is stopped,
+  reset and `dead`.
+- **Health.** 0 failed units, system and user.
