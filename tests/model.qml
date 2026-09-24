@@ -22,23 +22,48 @@ ShellRoot {
     // The view that has the keys, and only its keys in the footer (#15).
     fs.reset()
     t.ok(fs.view === "add", "reset: add view, got " + fs.view)
-    t.ok(fs.keysHint.indexOf("Ctrl+F") >= 0 && fs.keysHint.indexOf("scroll") < 0, "add hint: " + fs.keysHint)
+    t.ok(fs.keysHint.indexOf("Enter open") >= 0 && fs.keysHint.indexOf("scroll") < 0, "add hint: " + fs.keysHint)
     t.ok(fs.keysHint.indexOf("l log") < 0, "no log yet, no l: " + fs.keysHint)
     fs._showCard({ store: "flatpak", id: "org.a.B", name: "B" })
     t.ok(fs.view === "card", "a card: card view, got " + fs.view)
     t.ok(fs.keysHint.indexOf("p overrides") >= 0 && fs.keysHint.indexOf("c channel") < 0
-         && fs.keysHint.indexOf("PgUp PgDn scroll") >= 0, "flatpak card hint: " + fs.keysHint)
+         && fs.keysHint.indexOf("j k scroll") >= 0, "flatpak card hint: " + fs.keysHint)
     fs.applyLog = ["x"]
-    t.ok(fs.keysHint.indexOf("l log   Esc back") >= 0, "a log: l before Esc: " + fs.keysHint)
+    t.ok(fs.keysHint.indexOf("l log  Esc back") >= 0, "a log: l before Esc: " + fs.keysHint)
     fs.showingLog = true
     t.ok(fs.view === "log", "the log wins over a card, got " + fs.view)
-    t.ok(fs.keysHint.indexOf("Esc stops watching") >= 0 && fs.keysHint.indexOf("l log") < 0, "log hint: " + fs.keysHint)
+    fs.applying = true
+    t.ok(fs.keysHint.indexOf("Esc leaves it running") >= 0 && fs.keysHint.indexOf("l log") < 0, "log hint, building: " + fs.keysHint)
+    fs.applying = false
+    t.ok(fs.keysHint === "j k PgUp PgDn scroll  Esc back", "log hint, ended (#36): " + fs.keysHint)
     fs.showingLog = false; fs.applyLog = []
     fs._showCard({ store: "snap", id: "code", name: "code", channels: ["stable"] })
     t.ok(fs.keysHint.indexOf("c channel") >= 0 && fs.keysHint.indexOf("x classic") >= 0
          && fs.keysHint.indexOf("p overrides") < 0, "snap card hint: " + fs.keysHint)
     fs.setTab(1)
     t.ok(fs.view === "declared" && fs.keysHint.indexOf("d remove") >= 0, "declared: " + fs.view + " / " + fs.keysHint)
+    fs.setTab(0); fs.card = null
+
+    // A field has the keyboard: only keys that work there, never a letter (#36).
+    fs.applyLog = ["x"]; fs.typing = true
+    t.ok(fs.keysHint.indexOf("Enter look up") >= 0 && fs.keysHint.indexOf("Ctrl+F") >= 0
+         && fs.keysHint.indexOf("Tab Declared") >= 0, "field hint: " + fs.keysHint)
+    t.ok(fs.keysHint.indexOf("j k") < 0 && fs.keysHint.indexOf("a apply") < 0
+         && fs.keysHint.indexOf("l log") < 0, "field hint offers no letter: " + fs.keysHint)
+    fs._showCard({ store: "flatpak", id: "org.a.B", name: "B" })
+    t.ok(fs.keysHint === "Enter queue  Esc back", "overrides field hint: " + fs.keysHint)
+
+    // Every hint fits one line at scale 2 on 1080p: 72 characters (#36).
+    var cards = [{ store: "flatpak", id: "org.a.B", name: "B" },
+                 { store: "snap", id: "code", name: "code", channels: ["stable"] }, null]
+    for (var v = 0; v < 5; v++)
+      for (var b = 0; b < 8; b++) {
+        fs.showingLog = v === 4; fs.setTab(v === 3 ? 1 : 0)
+        fs.card = v < 3 ? cards[v] : null
+        fs.typing = (b & 1) !== 0; fs.applyLog = (b & 2) ? ["x"] : []; fs.applying = (b & 4) !== 0
+        t.ok(fs.keysHint.length <= 72, "budget " + fs.keysHint.length + " (" + fs.view + "): " + fs.keysHint)
+      }
+    fs.typing = false; fs.applying = false; fs.showingLog = false; fs.applyLog = []
     fs.setTab(0); fs.card = null
 
     // Channels: only what the snap publishes, in risk order.

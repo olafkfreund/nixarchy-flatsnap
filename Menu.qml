@@ -39,7 +39,8 @@ Item {
   function toggle() { if (root.opened) root.close(); else root.open("{}") }
   function focusKeys() { field.focus = false; ovField.focus = false; keys.forceActiveFocus() }
 
-  FlatsnapModel { id: fs }
+  // `typing`: the footer offers no letter key while a field would take it.
+  FlatsnapModel { id: fs; typing: field.activeFocus || ovField.activeFocus }
   // A build found by the status query on open arrives after open() has
   // placed the keyboard: move it to Esc/l then.
   Connections {
@@ -235,6 +236,10 @@ Item {
 
           // One Flickable for every card: a new app starts at its top.
           Connections { target: fs; function onCardChanged() { cardView.contentY = 0 } }
+          // A footer line appearing (the armed message) takes height from
+          // the bottom: keep what was at the bottom edge in sight (#36).
+          property real _lastHeight: 0
+          onHeightChanged: { if (_lastHeight > 0) root.scrollBy(cardView, _lastHeight - height); _lastHeight = height }
 
           Column {
             id: cardCol
@@ -376,6 +381,7 @@ Item {
           property bool follow: true
           function toEnd() { contentY = Math.max(0, contentHeight - height) }
           onContentHeightChanged: if (follow) toEnd()
+          onHeightChanged: if (follow) toEnd()   // the footer grew: stay at the end (#36)
           Connections {
             target: fs
             function onShowingLogChanged() { if (fs.showingLog) { logView.follow = true; logView.toEnd() } }
