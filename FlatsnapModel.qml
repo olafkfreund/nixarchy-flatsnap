@@ -155,7 +155,9 @@ QtObject {
     queueArmed = false
     if (classic) {
       if (card.confinement === "classic") { message = "this snap is only published with classic confinement"; return }
-      classic = false; classicChosen = false; classicArmed = false; return
+      // message too: x does not pass through Menu's disarm, and an
+      // "Enter again: … WITHOUT a sandbox" from queue() is now untrue.
+      classic = false; classicChosen = false; classicArmed = false; message = ""; return
     }
     if (!classicArmed) { classicArmed = true; message = "x again: run this snap WITHOUT a sandbox"; return }
     classic = true; classicChosen = true; classicArmed = false; message = ""
