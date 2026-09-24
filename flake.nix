@@ -99,6 +99,18 @@
             touch "$out"
           '';
 
+          # A fixed multiplier on a font token stops text following the
+          # shell's text size (#9). Every size is a Style.font.* token.
+          no-text-multiplier = pkgs.runCommand "nixarchy-flatsnap-text-size" { } ''
+            if grep -nE 'textScale|uiScale|px\(' ${./Menu.qml} \
+              || grep -n 'pixelSize:' ${./Menu.qml} \
+                 | grep -vE 'pixelSize: Style\.font\.[A-Za-z]+([;}[:space:]]|$)'; then
+              echo "fixed text multiplier above; use a Style.font token" >&2
+              exit 1
+            fi
+            touch "$out"
+          '';
+
           # No symlinks in the plugin folder: the validator refuses them.
           plugin-no-symlinks = pkgs.runCommand "nixarchy-flatsnap-no-symlinks" { } ''
             if find ${self.packages.${system}.plugin} -type l | grep .; then exit 1; fi
