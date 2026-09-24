@@ -41,6 +41,20 @@ Item {
 
   FlatsnapModel { id: fs }
 
+  // A line of Line text: the scroll step, so it follows the text size.
+  FontMetrics {
+    id: lineMetrics
+    font.family: Style.font.family
+    font.pixelSize: Style.font.title
+  }
+
+  // Flickable has no key scrolling of its own; this is it, clamped to the content.
+  function scrollBy(view, dy) {
+    view.contentY = Math.max(0, Math.min(view.contentHeight - view.height, view.contentY + dy))
+  }
+  // A page keeps the last line of the old one in sight.
+  function pageOf(view) { return view.height - lineMetrics.lineSpacing }
+
   // One line of plain text in the menu's colours. Everything shown here
   // came from a store or a build log, so it is never markup.
   component Line: Text {
