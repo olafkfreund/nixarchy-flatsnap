@@ -93,6 +93,8 @@ check() { # check <description> <jq filter> <cmd...>
   out=$("$@") || { bad "$d: exited $? -> $out"; return; }
   jq -e "$f" <<<"$out" >/dev/null && ok || bad "$d: $f -> $out"
 }
+# fixtures/flathub-search.json is search_flathub's default fixture; it matches
+# flathub-search-calculator.json (resolve's, by ID) on purpose. Both are used.
 check "search flathub" '.[0] == {store:"flatpak",id:"org.gnome.Calculator",name:"Calculator",summary:.[0].summary}' run search flatpak calculator
 check "search snap"    'map(.id) == ["hello","hello-world","hello-pasman"]' run search snap hello
 out=$(run search snap "$(printf 'a\nb')"); [ $? -eq 2 ] && ok || bad "multi-line search accepted: $out"
@@ -244,8 +246,12 @@ out=$(pa apply); rc=$?
 out=$(APPLY_RC=3 pa apply)
 jq -e '.nixarchyFlatsnapApply == {ok:false,exit:3,message:"nixarchy-apply exited 3"}' <<<"$(tail -1 <<<"$out")" >/dev/null && ok || bad "apply failure: $out"
 
+# A nixarchy-apply with no flake= line: fall back to /etc/nixos, and say so on
+# stderr only, so the panel still gets clean JSON on stdout.
 stub nixarchy-apply 'exit 0'
-out=$(pa preflight); [ $? -eq 2 ] && jq -e '.error | test("update nixarchy")' <<<"$out" >/dev/null && ok || bad "old nixarchy-apply not caught: $out"
+out=$(pa preflight 2>"$work/err"); rc=$?
+[ $rc -eq 0 ] && jq -e '.ok' <<<"$out" >/dev/null && grep -q 'could not read the flake path' "$work/err" &&
+  grep -q '^/etc/nixos#' "$NIX_LOG" && ok || bad "flake fallback: rc=$rc out=$out err=$(cat "$work/err") nix=$(cat "$NIX_LOG")"
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

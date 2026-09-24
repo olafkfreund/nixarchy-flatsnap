@@ -378,6 +378,9 @@ flake() {
     # shellcheck disable=SC2016 # a literal ${...}: the line being matched
     d=$(sed -n 's/^flake="\${NIXARCHY_FLAKE:-\(.*\)}"$/\1/p' "$a" | head -1)
   fi
+  # ponytail: sed over nixarchy-apply's source until nixarchy exposes the
+  # flake it rebuilds; then ask it instead. Stderr, so the panel's JSON is clean.
+  [ -n "$d" ] || echo "nixarchy-flatsnap: could not read the flake path from nixarchy-apply; using /etc/nixos (set NIXARCHY_FLAKE to override)" >&2
   printf '%s' "${d:-/etc/nixos}"
 }
 
@@ -385,15 +388,11 @@ flake() {
 # to know before it runs:
 #   - is the module imported? Without it, the copied flatsnap.nix names
 #     options that do not exist, and the rebuild fails on evaluation.
-#   - does this nixarchy-apply copy flatsnap.nix at all? One from before
-#     the nixarchy patch does not, and the apply would "succeed" doing nothing.
 #   - with uninstallUnmanaged on, which installed Flatpaks will be removed?
 cmd_preflight() {
-  local host ev apply_bin fp
+  local host ev fp
   host=$(uname -n)
-  apply_bin=$(command -v nixarchy-apply) || die "nixarchy-apply not found: is this nixarchy?"
-  grep -q flatsnap "$apply_bin" ||
-    die "this nixarchy's apply does not copy flatsnap.nix yet; update nixarchy"
+  command -v nixarchy-apply >/dev/null || die "nixarchy-apply not found: is this nixarchy?"
   ev=$(nix eval --json "$(flake)#nixosConfigurations.\"$host\"" --apply '
     c: {
       hasModule = (c.options.programs.nixarchy or { }) ? flatsnap;
