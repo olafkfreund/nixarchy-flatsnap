@@ -365,3 +365,44 @@ checks. Nothing in steps 12-13 was verified. Step 14 (restore) ran.
   enough. Whatever rewrites `nixarchy.distrobox` and restarts the shell has
   to be found and stopped first. The same run could then use the corrected
   shell relaunch above.
+
+## Live check (#33, #35), 2026-09-25
+
+razer was reserved by the user, and the bus claim is `$Tx-y3Ts…`. The run
+used main d3a2744 and passed #33's remaining check.
+
+- **Setup.**
+  - `/tmp/flake-33` was nixos_config 20b655c24, the source of gen 2954.
+    Only `.nodes["nixarchy-flatsnap"].locked` was pinned to d3a2744, and
+    `programs.nixarchy.flake = lib.mkForce "/tmp/flake-33"`.
+  - Built on p620 (`r7r5gqnl…`). `diff-closures` against 2954 showed only
+    `nixarchy-flatsnap`. Then `nix copy --no-check-sigs`, rsync and
+    `switch-to-configuration test`.
+  - The shell was relaunched with `NIXARCHY_FLAKE=/tmp/flake-33`.
+- **Relaunch gotcha.** razer's Hyprland now takes Lua config, so
+  `hyprctl dispatch exec …` is rejected (`')' expected near 'env'`). The
+  relaunch is `hyprctl dispatch 'hl.dsp.exec_cmd("env NIXARCHY_FLAKE=… omarchy-launch-shell")'`.
+  The first attempt killed the shell and then failed to start it, so there
+  was no shell for a few minutes.
+- **Apply 1** (hello-world snap, `passwordless`) ended `— applied —`
+  (gen 2955).
+  - Its build phase lasted about 5 s (23:44:45–23:44:50), too short to
+    drive by hand.
+  - The switch's Hyprland reload then closed the panel (nixarchy#919) and
+    put the scale back to 1, so the scroll keys sent then did nothing.
+- **Apply 2** (unit `2cfff8a7…`, gen 2956, `Result=success`) ended
+  `— applied —`.
+  - The clone had a temporary chain of 40 sequential derivations
+    (`zz-vl-slow-N`, `sleep 2` each), so the log grew by a `building` line
+    about every 2 s for about 100 s.
+  - Checked at scale 2. Times are from the journal and screenshots.
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| At the end, the log follows new lines | **pass** | 23:48:40 → 23:48:46: the last line went from `slow-4` to `slow-6`. |
+| k k, Up and PgUp scroll during the build, and the view holds while lines arrive | **pass** | 23:48:47 → 23:48:53: the journal grew 156 → 159 lines (slow-7 → slow-10). The view stayed on `slow-25 … slow-40` both times, with "↓ more (j)". |
+| j and Down while scrolled up move one line each, and it still holds | **pass** | The top moved from `slow-25` to `slow-27`. |
+| Scrolling back to the end (PgDn ×10) resumes following | **pass** | 23:48:55 → 23:49:02: the last line went from `slow-11` to `slow-14`. |
+
+#33 is closed on this evidence. The restore is recorded in
+plan/2026-09-24-23-detach-apply.md, "Live check (#33, #35), 2026-09-25".
