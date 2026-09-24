@@ -72,6 +72,9 @@ out=$(bash "$cli" resolve 'snap install no-stable --channel=stable'); rc=$?
 {
 refuse_early '$(id)'
 refuse_early '"; rm -rf ~'
+# Only the install verb itself, and Flatpak IDs within D-Bus's 255 (#13 C9).
+refuse_early 'flatpak installx org.gnome.Calculator'
+refuse_early "org.example.$(printf 'A%.0s' $(seq 244))"
 refuse_early '${x}'
 refuse_early 'org.gnome.${x}.App'
 refuse_early 'http://flathub.org/apps/a.b.c'
@@ -146,6 +149,15 @@ rm -f "$NIXARCHY_FLATSNAP_FILE"
 run add snap hello-world >/dev/null
 sed -i 's|    flatpaks = \[|    flatpaks = [\n      { appId = "org.hand.Edited"; }|' "$NIXARCHY_FLATSNAP_FILE"
 check "hand edit kept" 'map(.id) == ["org.hand.Edited","hello-world","code"]' run add snap code
+# A backslash in a hand-edited value survives a rewrite as one backslash (#13 C7).
+printf '{ programs.nixarchy.flatsnap = { flatpaks = [ { appId = "org.hand.Bs"; overrides = { Environment = { X = "a\\\\b"; }; }; } ]; snaps = [ ]; }; }\n' >"$NIXARCHY_FLATSNAP_FILE"
+run add snap code >/dev/null
+check "backslash round trip" '(.[] | select(.id=="org.hand.Bs") | .overrides.Environment.X) == "a\\b"' run add snap code
+run rm flatpak org.hand.Bs >/dev/null
+out=$(run add flatpak "org.example.$(printf 'A%.0s' $(seq 244))"); [ $? -eq 2 ] && ok || bad "256-character Flatpak ID accepted: $out"
+check "255-character Flatpak ID" 'length > 0' run add flatpak "org.example.$(printf 'A%.0s' $(seq 243))"
+run rm flatpak "org.example.$(printf 'A%.0s' $(seq 243))" >/dev/null
+
 # One that breaks the shape is refused, and the file is not touched.
 for foreign in '{ config, ... }: { }' '{ services.foo.enable = true; programs.nixarchy.flatsnap.snaps = [ ]; }'; do
   printf '%s\n' "$foreign" >"$NIXARCHY_FLATSNAP_FILE"

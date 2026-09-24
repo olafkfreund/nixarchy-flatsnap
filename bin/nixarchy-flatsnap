@@ -10,6 +10,8 @@
 set -euo pipefail
 
 FP_RE='^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*){2,}$'
+# A Flatpak app ID is a D-Bus name: at most 255 characters.
+fp_id_ok() { [ ${#1} -le 255 ] && [[ $1 =~ $FP_RE ]]; }
 SNAP_RE='^[a-z0-9][a-z0-9-]{0,39}$'
 CHAN_RE='^(stable|candidate|beta|edge)$'
 
@@ -57,15 +59,15 @@ classify() {
     die "only Flathub .flatpakref links are supported; other remotes are not in v1"
   elif [[ $text == http://* ]]; then die "https links only"
   elif [[ $text == *://* ]]; then die "not a Flathub or Snapcraft link"
-  elif [[ $text == "flatpak install"* || $text == "snap install"* ]]; then
+  elif [[ $text == "flatpak install "* || $text == "snap install "* ]]; then
     parse_install "$text"
-  elif [[ $text =~ $FP_RE ]]; then store=flatpak id=$text
+  elif fp_id_ok "$text"; then store=flatpak id=$text
   elif [[ $text =~ $SNAP_RE ]]; then store=ask id=$text
   else die "not an app ID, package name, or Flathub/Snapcraft link"
   fi
 
   case $store in
-    flatpak) [[ $id =~ $FP_RE ]] || die "not a valid Flatpak app ID" ;;
+    flatpak) fp_id_ok "$id" || die "not a valid Flatpak app ID" ;;
     snap|ask) [[ $id =~ $SNAP_RE ]] || die "not a valid snap name" ;;
   esac
 }
@@ -76,6 +78,7 @@ classify() {
 parse_install() {
   local -a w; read -ra w <<<"$1"
   local tool=${w[0]} names=() i
+  [ "${w[1]:-}" = install ] || die "not an app ID, package name, or Flathub/Snapcraft link"
   for ((i = 2; i < ${#w[@]}; i++)); do
     case ${w[i]} in
       -y|--assumeyes|--noninteractive|--system) ;;
@@ -260,7 +263,7 @@ load_state() {
 # already exclude \, " and ${, so this is the second line, not the first.
 render() {
   jq -r '
-    def nixstr: "\"" + (gsub("\\\\"; "\\\\\\\\") | gsub("\""; "\\\"") | gsub("\\$\\{"; "\\${")) + "\"";
+    def nixstr: "\"" + (gsub("\\\\"; "\\\\") | gsub("\""; "\\\"") | gsub("\\$\\{"; "\\${")) + "\"";
     def nix: if type == "string" then nixstr
       elif type == "boolean" then tostring
       elif type == "array" then "[ " + (map(nix) | join(" ")) + " ]"
@@ -357,7 +360,7 @@ cmd_add() {
   case ${1:-} in
     flatpak)
       [ $# -ge 2 ] || die "usage: nixarchy-flatsnap add flatpak <appId> [--override Section.key=value]..."
-      [[ $2 =~ $FP_RE ]] || die "not a valid Flatpak app ID"
+      fp_id_ok "$2" || die "not a valid Flatpak app ID"
       local app=$2 ov='{}'; shift 2
       while [ $# -gt 0 ]; do
         [ "$1" = --override ] && [ $# -ge 2 ] || die "unknown argument $1"
