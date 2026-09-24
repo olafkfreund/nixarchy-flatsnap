@@ -17,6 +17,7 @@ CHAN_RE='^(stable|candidate|beta|edge)$'
 # Flatpak override: Section.key=value. Context keys are lists (filesystems,
 # sockets, ...); everything else is a string, as in nix-flatpak's option.
 # The three parts are also what check_entries holds a hand edit to.
+# The panel repeats this grammar (FlatsnapModel.qml _ovHead); change both together.
 OV_SEC='[A-Za-z][A-Za-z ]{0,40}'
 OV_KEY='[A-Za-z0-9_.-]{1,100}'
 OV_VAL='[A-Za-z0-9_./:~!@+=-]{1,200}'
