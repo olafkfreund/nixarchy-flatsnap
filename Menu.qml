@@ -40,6 +40,12 @@ Item {
   function focusKeys() { field.focus = false; ovField.focus = false; keys.forceActiveFocus() }
 
   FlatsnapModel { id: fs }
+  // A build found by the status query on open arrives after open() has
+  // placed the keyboard: move it to Esc/l then.
+  Connections {
+    target: fs
+    function onApplyingChanged() { if (root.opened && fs.applying && fs.showingLog) root.focusKeys() }
+  }
 
   // A line of Line text: the scroll step, so it follows the text size.
   FontMetrics {

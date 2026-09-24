@@ -10,7 +10,8 @@ d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
 cp "$here/FlatsnapModel.qml" "$here/tests/model.qml" "$d/"
 cp -r "$here/bin" "$d/bin"
 # A writer that does get started must not touch the real flatsnap.nix.
-export XDG_CONFIG_HOME="$d/config"; unset NIXARCHY_FLATSNAP_FILE NIXARCHY_FLAKE NH_ELEVATION_STRATEGY
+export XDG_CONFIG_HOME="$d/config" XDG_STATE_HOME="$d/state"
+unset NIXARCHY_FLATSNAP_FILE NIXARCHY_FLAKE NH_ELEVATION_STRATEGY INVOCATION_ID
 
 # The model starts the real CLI, and an apply test would reach nixarchy-apply:
 # only stubs and store-resolved tools are on its PATH (tests/isolate.sh).

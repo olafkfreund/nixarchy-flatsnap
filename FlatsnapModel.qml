@@ -54,10 +54,13 @@ QtObject {
   }
 
   // Reopening during a build opens on its log: the build is still running.
+  // The unit is asked too: after a shell restart, `applying` starts false
+  // while the build it lost goes on (#23).
   function reset() {
     tab = 0; results = []; card = null; cursor = 0; message = ""
     pendingDelete = ""; applyArmed = false; willRemove = []; showingLog = applying
     list()
+    _queryStatus()
   }
 
   // `l`: back to the log after Esc, while it runs or after it ended.
@@ -339,28 +342,12 @@ QtObject {
     if (!showingLog) message = text + " — l shows the log"
   }
 
+  // The build runs in the user unit nixarchy-rebuild, not in this shell
+  // (#23): the launcher's stdout ends at "started" or at an error, the log
+  // comes from the unit's journal, and only the unit's state -- read by
+  // apply-status, never a line of text -- says how it ended.
   property Process _apply: Process {
-    stdout: SplitParser {
-      onRead: function (line) {
-        var s = String(line)
-        // Only our own record ends the apply; a build can print JSON too.
-        if (s.indexOf("{\"nixarchyFlatsnapApply\"") === 0) {
-          try {
-            var r = JSON.parse(s).nixarchyFlatsnapApply
-            if (r && typeof r.ok === "boolean") {
-              root._applyDone = true; root.applying = false
-              root._ended(r.ok ? "applied" : "apply failed: " + r.message)
-              root.list()
-              return
-            }
-          } catch (e) {}
-        }
-        if (s.indexOf("{\"error\"") === 0) {
-          try { s = "— " + JSON.parse(s).error + " —" } catch (e) {}
-        }
-        root._log(s)
-      }
-    }
+    stdout: SplitParser { onRead: function (line) { root._applyLine(String(line)) } }
     onExited: function (exitCode, exitStatus) {
       Qt.callLater(function () {
         if (root._applyDone) return
@@ -369,6 +356,110 @@ QtObject {
       })
     }
   }
+
+  function _applyLine(s) {
+    if (s.indexOf("{\"nixarchyFlatsnapStarted\"") === 0) {
+      try {
+        var r = JSON.parse(s).nixarchyFlatsnapStarted
+        if (r && typeof r.invocationId === "string") { _applyDone = true; _watch(r.invocationId); return }
+      } catch (e) {}
+    }
+    if (s.indexOf("{\"error\"") === 0) {
+      try {
+        var err = JSON.parse(s).error
+        _applyDone = true; applying = false
+        _ended(err)
+        _queryStatus()   // "already running": find that build and show it
+        return
+      } catch (e) {}
+    }
+    _log(s)
+  }
+
+  property string _invocation: ""   // the run being watched
+  property var _head: []            // the log before the journal's lines
+  property string _pendingEnd: ""
+
+  // Follow one run: its journal into the log, its state every 2 s.
+  function _watch(id) {
+    _invocation = id; applying = true; _head = applyLog.slice()
+    if (id !== "") {
+      _follow.command = [script, "apply-log", id, "--follow"]
+      _follow.running = true
+    }
+    _poll.running = true
+  }
+
+  property Process _follow: Process {
+    stdout: SplitParser { onRead: function (line) { root._log(String(line)) } }
+  }
+  property Timer _poll: Timer { interval: 2000; repeat: true; onTriggered: root._queryStatus() }
+  property Process _status: Process {
+    stdout: StdioCollector { onStreamFinished: root._onStatus(root._parse(text)) }
+  }
+  function _queryStatus() {
+    if (_status.running) return
+    _status.command = [script, "apply-status"]
+    _status.running = true
+  }
+
+  function _onStatus(d) {
+    if (!d || d.error) return
+    if (d.state === "running") {
+      if (applying && _invocation === d.invocationId) return
+      if (applying && _invocation === "") { _watch(d.invocationId); return }
+      // A build this panel is not watching: the shell restarted under it,
+      // or it was started from a terminal. It copies flatsnap.nix either way.
+      applyLog = d.ours ? [] : ["a rebuild started outside the panel"]
+      showingLog = true
+      _watch(d.invocationId)
+      return
+    }
+    if (applying && d.invocationId === _invocation && _invocation !== "") { _finish(d); return }
+    if (applying && _invocation !== "") {
+      // Its unit was reset before we read the result: the journal has it.
+      _stopWatching()
+      _ended("the rebuild ended, and its result is no longer there; see journalctl --user -u nixarchy-rebuild")
+      return
+    }
+    // A result that ended while no panel watched: shown once, and only ours.
+    if (!applying && d.ours && !d.shown && (d.state === "succeeded" || d.state === "failed")) {
+      _invocation = d.invocationId; _head = []
+      showingLog = true
+      _finish(d)
+    }
+  }
+
+  function _endText(d) {
+    if (d.state === "succeeded") return "applied"
+    if (d.result === "signal" || d.result === "core-dump") return "apply failed (killed)"
+    return "apply failed (exit " + d.exit + ")"
+  }
+
+  function _stopWatching() { _poll.running = false; _follow.running = false; applying = false }
+
+  // The end: the whole log once more (the follower may have missed lines),
+  // then the result, then the result marked shown.
+  function _finish(d) {
+    _stopWatching()
+    _pendingEnd = _endText(d)
+    _reload.command = [script, "apply-log", d.invocationId]
+    _reload.running = true
+  }
+  property Process _reload: Process {
+    stdout: StdioCollector { onStreamFinished: root._onReloaded(text) }
+  }
+  function _onReloaded(text) {
+    var lines = String(text).split("\n")
+    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop()
+    var l = _head.concat(lines)
+    applyLog = l.length > 2000 ? l.slice(l.length - 2000) : l
+    _ended(_pendingEnd)
+    _ack.command = [script, "apply-status", "--ack", _invocation]
+    _ack.running = true
+    list()
+  }
+  property Process _ack: Process {}
 
   function _log(s) {
     var l = applyLog.slice()
