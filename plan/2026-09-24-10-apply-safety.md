@@ -296,6 +296,19 @@ numbers are only a guide.
    → verify by: `bash tests/cli.sh` reports 0 failed. Each new case fails
    when its step's change is reverted locally (spot-check cases 1, 9 and 11).
 
+   *As implemented:*
+   - **When.** This step landed right after step 6, as step 6's
+     verification. Case 8 is in step 5.
+   - **Case 9's hash.** It uses 64 zeros, a well-formed stale hash.
+     `deadbeef` is now refused earlier, as a malformed hash. Two extra
+     refusals are covered: a malformed `--expect` and an unknown argument.
+   - **Where the spot-checks ran.** Each ran as a mutation in a scratch copy,
+     built as `path:` flake `checks.cli` in the sandbox, not on the host:
+     - shape check removed from preflight and apply: red, 18 failures;
+     - the `--expect` comparison removed: red on "stale hash";
+     - the filter's escaping removed: red on "forged markers".
+   - `checks.cli`: 126 passed, 0 failed.
+
 10. **`tests/model.qml`: new cases**, under the step-2 PATH:
 
     | # | Action | Expect |
