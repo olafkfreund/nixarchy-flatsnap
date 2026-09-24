@@ -487,3 +487,27 @@ Also seen, all cosmetic and none from this task:
   `/tmp/flake-23` and the helper files are removed. The unit is stopped,
   reset and `dead`.
 - **Health.** 0 failed units, system and user.
+
+## Post-merge note (2026-09-24)
+
+PR #34 merged as 1a04bc1, and #23 is closed. The follow-ups:
+
+- **Step 11, the nixarchy follow-up (decision 9):**
+  olafkfreund/nixarchy#979. It asks for `--status` and `--log`, a pinned
+  input for `--detach`, and the unit name as an interface. The search found
+  no duplicate; the closest open issue is nixarchy#967, which it references.
+- **pkexec from the user unit is unverified** (razer has NOPASSWD sudo):
+  olafkfreund/nixarchy-flatsnap#35. It needs a host where sudo asks for a
+  password.
+- **Three cosmetic findings from #15:** olafkfreund/nixarchy-flatsnap#36.
+  - At scale 2 the footer wraps, and the red confirmation covers the card's
+    last line.
+  - The Add view offers `l log` while the field has the keys.
+  - The log footer still says "the build carries on" after the build has
+    ended.
+- **#22 closed as completed.** Its substance passed live: the real apply
+  to `— applied —`, Esc, `l`, reopen, and `d` refused. Enter-refused is
+  covered by `tests/model.qml`. The evidence is in its comment.
+- **#33 stays open, retitled to its one remaining check:** the apply log
+  follows only at the end, and the scroll keys work, during a real build.
+  Every other check passed.
