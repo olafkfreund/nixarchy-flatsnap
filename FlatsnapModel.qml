@@ -23,7 +23,7 @@ QtObject {
   property bool classic: false
   property bool classicArmed: false   // first x arms, second x confirms
   property bool classicChosen: false  // x x on a channel the store publishes strict
-  property string overrides: ""       // "Section.key=value ..." for Flatpaks
+  property string overrides: ""       // Section.key=value, whitespace-separated; a section may contain spaces
   // The next Enter queues: a classic snap or any override leaves or widens
   // a sandbox, so the first Enter only says what it will do.
   property bool queueArmed: false
@@ -218,7 +218,14 @@ QtObject {
       if (classic) args.push("--classic")
     } else {
       args = ["add", "flatpak", card.id]
-      var ov = overrides.trim().split(/\s+/).filter(function (s) { return s.length > 0 })
+      var r = _splitOverrides(overrides), ov = r.ov
+      // Text that is not an override: say which part, and do not arm.
+      if (r.bad !== "") {
+        queueArmed = false
+        message = "Not an override: " + (r.bad.length > 60 ? r.bad.slice(0, 60) + "…" : r.bad)
+                  + " (Section.key=value, separated by spaces)"
+        return
+      }
       // An override widens (or narrows) the sandbox, so it is confirmed the
       // way classic confinement is: the first Enter says what it will do,
       // and names the ones on the CLI's escape list with what they grant.
@@ -227,7 +234,7 @@ QtObject {
         var esc = ov.map(_escapes).filter(function (s) { return s !== "" })
         message = esc.length > 0
           ? "Enter again: " + card.id + " ESCAPES its sandbox — " + esc.join("; ")
-          : "Enter again: change " + card.id + "'s sandbox with " + ov.join("  ")
+          : "Enter again: change " + card.id + "'s sandbox with " + ov.join(", ")
         return
       }
       for (var i = 0; i < ov.length; i++) args.push("--override", ov[i])
