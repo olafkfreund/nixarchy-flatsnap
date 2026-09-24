@@ -293,3 +293,27 @@ The full evidence is on #13
   `…43x4a2bh…-6774f7b`), with 0 failed units, both test snaps purged,
   `managed` empty, and snapd inactive. The core24 mount this test added was
   unmounted. The generation was posted on the bus.
+
+### Step 9: C6, deviations from the plan (2026-09-24)
+
+- **`lookup_snap` reads the snap's `default-track`, not only when `latest`
+  is absent.** The planned fallback would not have fixed the snap that
+  prompted it. `node` does have a `latest` track, but that track has only
+  `edge`. Meanwhile snap installs a bare `--channel=<risk>` from the default
+  track: on razer, `--channel=stable` gave `24/stable`. So `lookup_snap` now
+  selects `$j."default-track" // "latest"`, which describes exactly what
+  `snap install` will do. The info API returns `default-track` alongside the
+  requested fields (checked live for `node`: `"24"`). The existing fixtures
+  have none, so they still read `latest`.
+- **The reconciler compares the risk, not `${tracking##*/}`.** `risk()`
+  takes the second segment (`24/stable` gives `stable`, and
+  `latest/edge/fix` gives `edge`). A branch suffix would otherwise have been
+  compared as if it were the risk.
+- **Tests.**
+  - `tests/fixtures/snap-info-trackdemo.json` is synthetic, derived from the
+    hello-world fixture: default track `24` with `24/stable` classic, plus
+    `latest/edge` strict. `resolve` gives `channels == ["stable"]` and
+    classic.
+  - The reconciler stub uses `node 24/stable classic`. A plan with `stable`
+    makes no `refresh`, and this test reproduces the razer log line exactly
+    before the fix. A real change to `edge` still refreshes.

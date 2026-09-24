@@ -23,6 +23,11 @@ snap wait system seed.loaded
 installed=$(snap list --unicode=never --color=never 2>/dev/null | awk 'NR > 1 { print $1, $4, $6 }')
 is_installed() { awk -v n="$1" '$1 == n { f = 1 } END { exit !f }' <<<"$installed"; }
 tracking() { awk -v n="$1" '$1 == n { print $2 }' <<<"$installed"; }
+# The risk part of tracking: "24/stable" -> stable, "latest/edge/fix" -> edge.
+# Only the risk is ours to compare: a bare --channel=<risk> installs from the
+# snap's DEFAULT track, which is not always latest (node: 24/stable), and
+# comparing against latest/<risk> refreshed such a snap on every run.
+risk() { local t; t=$(tracking "$1"); t=${t#*/}; printf '%s' "${t%%/*}"; }
 # Notes is a comma list: "classic", "disabled,classic", "-".
 is_classic() { awk -v n="$1" '$1 == n && ("," $3 ",") ~ /,classic,/ { f = 1 } END { exit !f }' <<<"$installed"; }
 is_managed() { grep -qxF "$1" "$managed"; }
@@ -46,7 +51,7 @@ while IFS=$'\t' read -r name channel classic; do
     echo "$name is installed with classic confinement but declared strict; snap cannot switch in place." \
       "Remove it from the menu, apply, then add it again." >&2
     failed=1
-  elif [ "$(tracking "$name")" != "latest/$channel" ] && [ "$(tracking "$name")" != "$channel" ]; then
+  elif [ "$(risk "$name")" != "$channel" ]; then
     echo "refresh $name -> $channel"
     snap refresh "$name" --channel="$channel" "${flag[@]}" || failed=1
   fi

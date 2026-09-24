@@ -126,7 +126,10 @@ lookup_snap() {
   j=$(snap_api "snap-info-$1.json" "info/$1?fields=title,summary,publisher,license,confinement") || return 1
   out=$(jq -cn --arg id "$1" --arg ch "$channel" --argjson given "$channel_given" \
     --argjson classic "$classic" --argjson j "$j" '
-    [$j."channel-map"[] | select(.channel.track == "latest")] as $m
+    # The default track, not always latest: snap installs a bare risk from
+    # it (node: --channel=stable is 24/stable), so that is what to describe.
+    ($j."default-track" // "latest") as $track
+    | [$j."channel-map"[] | select(.channel.track == $track)] as $m
     | ([$m[].channel.risk] | unique) as $have
     # No channel named: the first one the snap publishes, in risk order, so
     # the card never offers one that would fail at apply. Nothing published

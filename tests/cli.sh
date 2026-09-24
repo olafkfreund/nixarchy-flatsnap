@@ -61,6 +61,9 @@ expect 'hello-world'                                            '.store=="snap" 
 expect 'https://snapcraft.io/no-stable'                         '.channel=="beta" and .confinement=="strict" and .classic==false'
 expect 'snap install no-stable --edge'                          '.channel=="edge" and .classic==true'
 expect 'snap install hello-world --channel=beta'                '.channel=="beta"'
+# A default track other than latest: snap installs a bare risk from THAT
+# track (razer: node --channel=stable -> 24/stable), so describe it (#13 C6).
+expect 'https://snapcraft.io/trackdemo'                         '.channels==["stable"] and .channel=="stable" and .confinement=="classic" and .classic==true'
 # A channel named but not published is refused up front, not at apply.
 out=$(bash "$cli" resolve 'snap install no-stable --channel=stable'); rc=$?
 [ $rc -eq 2 ] && jq -e '.error | test("does not publish stable") and test("beta") and test("edge")' <<<"$out" >/dev/null && ok ||
@@ -258,6 +261,13 @@ grep -q '^byhand ' "$db" && ok || bad "removed a hand-installed snap"
 # One failure: the rest still happen, and the exit code says so.
 reconcile '{"snaps":[{"name":"broken","channel":"stable","classic":false},{"name":"hello-world","channel":"stable","classic":false}]}' >/dev/null; rc=$?
 [ $rc -eq 1 ] && grep -q '^hello-world ' "$db" && ok || bad "partial failure: rc=$rc db=$(cat "$db")"
+
+# A snap on a non-latest default track is not refreshed on every run (#13 C6).
+printf 'node 24/stable classic\n' >"$db"
+reconcile '{"snaps":[{"name":"node","channel":"stable","classic":true}]}' >/dev/null; rc=$?
+[ $rc -eq 0 ] && ! grep -q '^refresh' "$db.log" && ok || bad "non-latest track refreshed: rc=$rc log=$(tr '\n' ';' <"$db.log")"
+reconcile '{"snaps":[{"name":"node","channel":"edge","classic":true}]}' >/dev/null
+grep -qx 'refresh node --channel=edge --classic' "$db.log" && ok || bad "real channel change not refreshed: $(tr '\n' ';' <"$db.log")"
 
 # Declared strict, installed classic: snap cannot switch in place, so the
 # reconciler refuses loudly and leaves it alone; the rest still happen (#13 C2).

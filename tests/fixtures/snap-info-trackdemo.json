@@ -1,0 +1,30 @@
+{
+  "name": "trackdemo",
+  "snap": {
+    "title": "Track Demo",
+    "summary": "The 'hello-world' of snaps",
+    "license": "MIT",
+    "publisher": {
+      "display-name": "Canonical"
+    }
+  },
+  "channel-map": [
+    {
+      "channel": {
+        "name": "24/stable",
+        "risk": "stable",
+        "track": "24"
+      },
+      "confinement": "classic"
+    },
+    {
+      "channel": {
+        "name": "edge",
+        "risk": "edge",
+        "track": "latest"
+      },
+      "confinement": "strict"
+    }
+  ],
+  "default-track": "24"
+}
