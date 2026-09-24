@@ -39,11 +39,17 @@ QtObject {
   readonly property var rows: tab === 0 ? results : declared
   readonly property var current: rows.length > 0 ? rows[Math.min(cursor, rows.length - 1)] : null
 
+  // Reopening during a build opens on its log: the build is still running.
   function reset() {
     tab = 0; results = []; card = null; cursor = 0; message = ""
-    pendingDelete = ""; applyArmed = false; willRemove = []; showingLog = false
+    pendingDelete = ""; applyArmed = false; willRemove = []; showingLog = applying
     list()
   }
+
+  // `l`: back to the log after Esc, while it runs or after it ended.
+  function showLog() { if (applyLog.length > 0) showingLog = true }
+
+  readonly property string _rebuilding: "a rebuild is running — wait for it to finish"
 
   function setTab(t) {
     tab = (t + 2) % 2; cursor = 0; pendingDelete = ""
@@ -167,8 +173,10 @@ QtObject {
   }
   property string _after: ""
 
+  // Not while a build reads the file: apply holds its lock until it ends.
   function queue() {
     if (!card || busy) return
+    if (applying) { message = _rebuilding; return }
     var args
     if (card.store === "snap") {
       args = ["add", "snap", card.id, "--channel", channel]
@@ -193,6 +201,7 @@ QtObject {
   function remove() {
     var r = current
     if (tab !== 1 || !r || busy) return
+    if (applying) { message = _rebuilding; return }
     var key = r.store + ":" + r.id
     if (pendingDelete !== key) { pendingDelete = key; message = "y removes " + r.id + " at the next apply; any other key keeps it"; return }
     _after = r.id + " removed — a applies"
@@ -212,31 +221,38 @@ QtObject {
 
   // ---- apply -------------------------------------------------------------
 
-  // First `a` asks what the apply would do. If it removes Flatpaks nobody
-  // declared (uninstallUnmanaged), that is said, and a second `a` goes ahead.
+  // First `a` asks what the apply would do and says so; a second `a` builds
+  // exactly that state (--expect), and any other key cancels.
   property Process _preflight: Process {
     stdout: StdioCollector {
-      onStreamFinished: {
-        root.busy = false
-        var d = root._parse(text)
-        if (d.error || !d.ok) { root.message = d.error || d.message; return }
-        root.willRemove = d.willRemove || []
-        if (root.willRemove.length > 0) {
-          root.applyArmed = true
-          root.message = "a again: this apply also REMOVES " + root.willRemove.join(", ")
-            + " (uninstallUnmanaged is on)"
-        } else {
-          root._startApply()
-        }
-      }
+      onStreamFinished: { root.busy = false; root._onPreflight(root._parse(text)) }
     }
+  }
+  property string _stateHash: ""
+
+  function _onPreflight(d) {
+    if (d.error || !d.ok) { message = d.error || d.message; return }
+    willRemove = d.willRemove || []
+    _stateHash = d.stateHash || ""
+    var sign = { add: "+ ", remove: "− ", change: "~ " }
+    var ch = (d.changes || []).map(function (c) {
+      return sign[c.op] + c.id + (c.detail ? " (" + c.detail + ")" : "")
+    })
+    var lines = ch.slice(0, 6)
+    if (ch.length > 6) lines.push("and " + (ch.length - 6) + " more")
+    if (willRemove.length > 0)
+      lines.push("this apply also REMOVES " + willRemove.join(", ") + " (uninstallUnmanaged is on)")
+    applyArmed = true
+    message = lines.length === 0
+      ? "nothing changed since the last apply — a again rebuilds anyway"
+      : lines.join("\n") + "\na again applies; any other key cancels"
   }
 
   function apply() {
     if (applying || busy) return
     if (applyArmed) { applyArmed = false; _startApply(); return }
-    message = "checking…"
     _run(_preflight, ["preflight"])
+    message = "checking…"   // after _run, which clears it
   }
 
   function disarm() { applyArmed = false; classicArmed = false; overridesArmed = false; pendingDelete = "" }
@@ -245,8 +261,14 @@ QtObject {
     _applyDone = false
     applyLog = ["starting rebuild…  ESC stops watching; the build carries on"]
     applying = true; showingLog = true; message = ""
-    _apply.command = [script, "apply"]
+    _apply.command = [script, "apply", "--expect", _stateHash]
     _apply.running = true
+  }
+
+  // The end of an apply, also said in the message line when the log is hidden.
+  function _ended(text) {
+    _log("— " + text + " —")
+    if (!showingLog) message = text + " — l shows the log"
   }
 
   property Process _apply: Process {
@@ -259,7 +281,7 @@ QtObject {
             var r = JSON.parse(s).nixarchyFlatsnapApply
             if (r && typeof r.ok === "boolean") {
               root._applyDone = true; root.applying = false
-              root._log(r.ok ? "— applied —" : "— failed: " + r.message + " —")
+              root._ended(r.ok ? "applied" : "apply failed: " + r.message)
               root.list()
               return
             }
@@ -275,7 +297,7 @@ QtObject {
       Qt.callLater(function () {
         if (root._applyDone) return
         root.applying = false
-        root._log("— the apply ended without a result; see above —")
+        root._ended("the apply ended without a result; see the log")
       })
     }
   }
