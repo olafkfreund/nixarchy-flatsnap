@@ -191,6 +191,13 @@
                 machine.wait_for_unit("snapd.service")
                 machine.succeed("systemctl cat nixarchy-flatsnap-snaps.service")
                 machine.succeed("grep -q hello-world $(systemctl show -P ExecStart nixarchy-flatsnap-snaps.service | grep -o '/nix/store/[^ ]*-nixarchy-flatsnap-snaps.json')")
+                # The hardened unit reaches snapd and fails only on the missing
+                # network (no store here), never on its own sandbox.
+                machine.wait_until_succeeds("systemctl show -P ActiveState nixarchy-flatsnap-snaps.service | grep -Eqx 'active|failed'", timeout=300)
+                machine.fail("journalctl -u nixarchy-flatsnap-snaps | grep -Ei 'permission denied|read-only file system|operation not permitted'")
+                machine.succeed("journalctl -u nixarchy-flatsnap-snaps | grep -q 'install hello-world'")
+                # Measured 1.8 with the hardening; --threshold counts tenths (20 = 2.0).
+                machine.succeed("systemd-analyze security --threshold=20 nixarchy-flatsnap-snaps.service")
               '';
           };
         });

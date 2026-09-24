@@ -112,6 +112,36 @@ in
           # sit there forever. Big snaps are slow, so this is generous.
           TimeoutStartSec = "30min";
           ExecStart = "${lib.getExe reconcile} ${plan}";
+
+          # Hardening. This unit is only a snap *client*: snapd.service does
+          # the downloads, mounts and snap-confine. snapd authorizes the
+          # client by its peer UID on /run/snapd.socket, so it stays root,
+          # but needs no capabilities and writes only its StateDirectory.
+          NoNewPrivileges = true; # never `snap run`, so never snap-confine
+          CapabilityBoundingSet = "";
+          AmbientCapabilities = "";
+          ProtectSystem = "strict"; # StateDirectory stays writable
+          # tmpfs, not true: the client opens /root/.snap/auth.json, and a
+          # hidden /root (EACCES) fails it where an empty one (ENOENT) means
+          # anonymous, as the store has always been used here.
+          ProtectHome = "tmpfs";
+          PrivateTmp = true;
+          PrivateDevices = true;
+          ProtectKernelTunables = true;
+          ProtectKernelModules = true;
+          ProtectKernelLogs = true;
+          ProtectControlGroups = true;
+          ProtectClock = true;
+          ProtectHostname = true;
+          RestrictAddressFamilies = [ "AF_UNIX" ]; # snapd's socket; the daemon does the network
+          RestrictNamespaces = true;
+          LockPersonality = true;
+          RestrictRealtime = true;
+          RestrictSUIDSGID = true;
+          MemoryDenyWriteExecute = true;
+          SystemCallArchitectures = "native";
+          SystemCallFilter = [ "@system-service" ];
+          UMask = "0077";
         };
       };
     })
