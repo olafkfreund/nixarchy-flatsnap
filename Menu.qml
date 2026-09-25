@@ -453,10 +453,19 @@ Item {
           anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
           spacing: Style.space(4)
           Line {
+            id: messageLine
             width: parent.width
             visible: fs.message.length > 0
             text: fs.message
-            color: (fs.applyArmed || fs.classicArmed || fs.queueArmed || fs.pendingDelete !== "") ? Color.urgent : Color.menu.text
+            color: fs.armed ? Color.urgent : Color.menu.text
+            // A prompt, not a status, by more than its colour (#26).
+            Accessible.description: fs.armed ? "confirmation pending" : ""
+          }
+          // Every message is said; a pending confirmation interrupts (#26).
+          // Each arming path sets its flag before its message (tests/model.qml).
+          Connections {
+            target: fs
+            function onMessageChanged() { if (fs.message.length > 0) root.announce(messageLine, fs.message, fs.armed) }
           }
           Line {
             width: parent.width
