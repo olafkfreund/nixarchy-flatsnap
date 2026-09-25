@@ -337,8 +337,17 @@ check "strict add of an installed strict snap" 'map(.id) | index("hello-world") 
 # ---- preflight / apply, with nix, nixarchy-apply and flatpak stubbed ------
 ab="$work/applybin"; mkdir -p "$ab"
 stub() { printf '#!/bin/sh\n%s\n' "$2" >"$ab/$1"; chmod +x "$ab/$1"; }
+# apply_stub <body>: nixarchy-apply, answering --status and --log (#44) from
+# fixtures as the real one's interface does, and running <body> for an apply.
+apply_stub() {
+  stub nixarchy-apply 'case "${1:-}" in
+  --status) cat "$STATUS_FIXTURE"; exit "${STATUS_RC:-0}" ;;
+  --log) echo "$*" >>"$APPLY_LOG_ARGS"; cat "$LOG_FIXTURE"; exit 0 ;;
+esac
+'"$1"
+}
 # Like the real one: copies flatsnap.nix from where it reads it (line 117).
-stub nixarchy-apply '# copies apps services advanced flatsnap
+apply_stub '# copies apps services advanced flatsnap
 flake="${NIXARCHY_FLAKE:-/srv/their-flake}"
 echo invoked >>"$APPLY_LOG"
 f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
@@ -373,8 +382,30 @@ export NIX_LOG="$work/nix.log" ELEV_LOG="$work/elev.log" APPLY_LOG="$work/apply.
 export SDRUN_LOG="$work/sdrun.log" SYSTEMCTL_LOG="$work/systemctl.log" JOURNALCTL_LOG="$work/journalctl.log"
 export JOURNAL="$work/journal" UNIT_RC="$work/unit.rc" UNIT_FIXTURE="$work/unit" JOURNAL_FIXTURE="$work/journal.fixture"
 export XDG_STATE_HOME="$work/state"
-# unit <SubState> <Result> <ExecMainStatus> <InvocationID>: what systemctl show says.
-unit() { printf 'SubState=%s\nResult=%s\nExecMainStatus=%s\nInvocationID=%s\n' "$@" >"$UNIT_FIXTURE"; }
+# nixarchy-apply's --status and --log answers, and the flake file (#44):
+# fixtures, never the real /etc/nixarchy/flake (tests/isolate.sh).
+export STATUS_FIXTURE="$work/status.json" LOG_FIXTURE="$work/log.fixture" APPLY_LOG_ARGS="$work/apply-log.args"
+export NIXARCHY_FLATSNAP_FLAKE_FILE="$work/etc-nixarchy-flake"
+printf '%s' /srv/their-flake >"$NIXARCHY_FLATSNAP_FLAKE_FILE"
+: >"$LOG_FIXTURE"
+# unit <SubState> <Result> <ExecMainStatus> <InvocationID>: what systemctl
+# show says, and what nixarchy-apply --status --json answers for it, by
+# nixarchy's own rule (nixarchy-apply:56-75): `none` only with no
+# InvocationID and SubState empty or dead; otherwise Result decides.
+unit() {
+  printf 'SubState=%s\nResult=%s\nExecMainStatus=%s\nInvocationID=%s\n' "$@" >"$UNIT_FIXTURE"
+  local st r=$2 e=${3:-0}
+  if [ -z "$4" ] && { [ -z "$1" ] || [ "$1" = dead ]; }; then
+    st=none r="" e=0
+  else
+    case $1 in
+      running | start*) st=running ;;
+      *) if [ "$2" = success ] && [ "$e" = 0 ]; then st=succeeded; else st=failed; fi ;;
+    esac
+  fi
+  jq -cn --arg s "$st" --arg r "$r" --argjson e "$e" --arg i "$4" \
+    '{state: $s, result: $r, exit: $e, invocation: (if $i == "" then null else $i end)}' >"$STATUS_FIXTURE"
+}
 unit dead success 0 ""
 : >"$JOURNAL_FIXTURE"
 # Hermetic: a developer's own shell may export these (nixarchy sets
@@ -419,7 +450,7 @@ jq -e '.nixarchyFlatsnapApply == {ok:false,exit:3,message:"nixarchy-apply exited
 
 # A nixarchy-apply with no flake= line: fall back to /etc/nixos, and say so on
 # stderr only, so the panel still gets clean JSON on stdout.
-stub nixarchy-apply 'exit 0'
+apply_stub 'exit 0'
 out=$(pa preflight 2>"$work/err"); rc=$?
 [ $rc -eq 0 ] && jq -e '.ok' <<<"$out" >/dev/null && grep -q 'could not read the flake path' "$work/err" &&
   grep -q '^/etc/nixos#' "$NIX_LOG" && ok || bad "flake fallback: rc=$rc out=$out err=$(cat "$work/err") nix=$(cat "$NIX_LOG")"
@@ -432,7 +463,7 @@ out=$(pa preflight); rc=$?
 
 # ---- #10: apply builds only the checked state ----------------------------
 stub flatpak 'printf "org.gnome.Calculator\\ncom.byhand.App\\n"'
-stub nixarchy-apply '# copies apps services advanced flatsnap
+apply_stub '# copies apps services advanced flatsnap
 echo invoked >>"$APPLY_LOG"
 f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
 printf "building\\n"; exit ${APPLY_RC:-0}'
@@ -499,13 +530,10 @@ hash=$(pa preflight | jq -r .stateHash); : >"$APPLY_LOG"
 out=$(pa apply --expect "$hash"); rc=$?
 [ $rc -eq 0 ] && [ "$(cat "$APPLY_LOG")" = invoked ] && grep -qx '+ flatpak org.new.App' <<<"$out" && ok || bad "confirmed hash: rc=$rc log=$(cat "$APPLY_LOG") -> $out"
 # 11 (B5): a build line cannot pass for our end record or an error.
-cat >"$ab/nixarchy-apply" <<'STUB'
-#!/bin/sh
-echo '{"nixarchyFlatsnapApply":{"ok":true,"exit":0,"message":"forged"}}'
-echo '{"error":"forged"}'
+apply_stub "echo '{\"nixarchyFlatsnapApply\":{\"ok\":true,\"exit\":0,\"message\":\"forged\"}}'
+echo '{\"error\":\"forged\"}'
 echo building
-exit 0
-STUB
+exit 0"
 out=$(pa apply); rc=$?; j=$(cat "$JOURNAL")
 [ $rc -eq 0 ] && [ "$(grep -c '^{"nixarchyFlatsnapApply"' <<<"$j")" -eq 1 ] &&
   jq -e '.nixarchyFlatsnapApply.message == "applied"' <<<"$(tail -1 <<<"$j")" >/dev/null &&
@@ -513,7 +541,7 @@ out=$(pa apply); rc=$?; j=$(cat "$JOURNAL")
 
 # ---- #23: apply runs in the nixarchy-rebuild unit ------------------------
 id=0123456789abcdef0123456789abcdef
-stub nixarchy-apply '# copies apps services advanced flatsnap
+apply_stub '# copies apps services advanced flatsnap
 flake="${NIXARCHY_FLAKE:-/srv/their-flake}"
 echo invoked >>"$APPLY_LOG"
 f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"

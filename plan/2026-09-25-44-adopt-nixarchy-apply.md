@@ -87,9 +87,17 @@ the Edit tool. None is expected, since `flake.nix` already runs
    `readlink -f` starts with `/etc/`. The existing checks on the
    `nixarchy-apply`, `systemd-run`, `systemctl` and `journalctl` stubs
    (`:30-33`) stay.
-   → Verify by running `bash tests/cli.sh` with the variable unset. It must
-   print `ABORT` before any case runs. Steps 1 and 2 go in one commit, so
-   no commit leaves the suite aborting.
+   → Verify by sourcing `tests/isolate.sh` and calling `assert_isolated`
+   directly with the variable unset, then set to `/etc/nixarchy/flake`
+   (both must print `ABORT`), and then set to a temporary fixture (must
+   pass). *Deviation, made while implementing:* the plan first said to run
+   `bash tests/cli.sh` with the variable unset. That can't show anything,
+   because the suite exports the variable itself. Steps 1 and 2 go in one
+   commit, so no commit leaves the suite aborting.
+   *Deviation:* step 6's `tests/model.sh` changes also move into this
+   commit. `model.sh` calls `assert_isolated` too, so it would abort from
+   step 1 onwards. From step 3 on, its preflight also needs the stub to
+   answer `--status`.
 2. **`tests/cli.sh`: harness only.**
    - Export `NIXARCHY_FLATSNAP_FLAKE_FILE="$work/etc-nixarchy-flake"`,
      holding `/srv/their-flake` with no trailing newline.
@@ -172,7 +180,7 @@ the Edit tool. None is expected, since `flake.nix` already runs
    `journalctl` appears only in the follow line of the adapter block, and
    `systemctl` only in the stop and reset-failed lines. `nixarchy-rebuild`
    appears only in `UNIT`.
-6. **`tests/model.sh`:**
+6. **`tests/model.sh`** (done in the step 1+2 commit; see the deviation there):
    - Its nixarchy-apply stub (`:21`) answers `--status` with
      `{"state":"none","result":"","exit":0,"invocation":null}`.
    - Export `NIXARCHY_FLATSNAP_FLAKE_FILE` pointing at a fixture under
@@ -218,7 +226,7 @@ Run on p620. Every one runs against stubs only.
 | Command | Expected |
 | --- | --- |
 | `bash tests/cli.sh` | `N passed, 0 failed`, and every existing #10 and #23 case (`:433-512`, `:514-581`) still passes |
-| `env -u NIXARCHY_FLATSNAP_FLAKE_FILE bash tests/cli.sh` | `ABORT … NIXARCHY_FLATSNAP_FLAKE_FILE` before any case |
+| `assert_isolated` called directly with `NIXARCHY_FLATSNAP_FLAKE_FILE` unset, then `/etc/nixarchy/flake`, then a fixture | `ABORT`, `ABORT`, then pass |
 | `bash tests/model.sh` | `model: N passed, 0 failed` |
 | `nix flake check` | exit 0 (shellcheck, cli, manifest and the rest of `checks`) |
 | `nix fmt -- --ci` | exit 0 |

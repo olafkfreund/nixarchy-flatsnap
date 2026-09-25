@@ -31,6 +31,12 @@ assert_isolated() {
     got=$(PATH=$path; command -v "$t") || got=""
     [ "$got" = "$stubs/$t" ] || { echo "ABORT: $t is '$got' on the test PATH, not the stub $stubs/$t" >&2; exit 1; }
   done
+  # The flake file preflight reads (#44): a fixture, never /etc/nixarchy/flake.
+  local ff=${NIXARCHY_FLATSNAP_FLAKE_FILE:-}
+  case "$ff:$(readlink -f "$ff" 2>/dev/null)" in
+    :*) echo "ABORT: NIXARCHY_FLATSNAP_FLAKE_FILE is not set: preflight would read /etc/nixarchy/flake" >&2; exit 1 ;;
+    /etc/*|*:/etc/*) echo "ABORT: NIXARCHY_FLATSNAP_FLAKE_FILE is under /etc ($ff)" >&2; exit 1 ;;
+  esac
   local IFS=:
   for dir in $path; do
     for p in "$dir" "$(readlink -f "$dir")"; do
