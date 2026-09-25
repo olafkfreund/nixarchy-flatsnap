@@ -17,6 +17,9 @@ ShellRoot {
   }
 
   FlatsnapModel { id: fs }
+  // What Menu.qml's announcement sees: `armed` as each message arrives (#26).
+  property bool armedAtMessage: false
+  Connections { target: fs; function onMessageChanged() { t.armedAtMessage = fs.armed } }
 
   Component.onCompleted: {
     // The view that has the keys, and only its keys in the footer (#15).
@@ -282,6 +285,32 @@ ShellRoot {
     fs.remove()
     t.ok(fs.pendingDelete !== "" && fs.message.indexOf("DELETES") < 0, "flatpak removal does not: " + fs.message)
     fs.disarm(); fs.tab = 0
+
+    // ---- #26: one armed flag, already set when its prompt arrives ------
+    fs.reset()
+    t.ok(!fs.armed, "at rest: not armed")
+    fs.tab = 1; fs.declared = [{ store: "snap", id: "code" }]; fs.cursor = 0
+    t.armedAtMessage = false
+    fs.remove()
+    t.ok(fs.armed && t.armedAtMessage, "a pending delete arms, before its message")
+    fs.disarm(); fs.tab = 0
+    t.ok(!fs.armed, "disarm() clears it")
+    t.armedAtMessage = false
+    fs._onPreflight({ ok: true, changes: [] })
+    t.ok(fs.applyArmed && fs.armed && t.armedAtMessage, "the apply summary arms, before its message")
+    fs.disarm()
+    fs._showCard({ store: "snap", id: "tool", name: "Tool", channels: ["stable"], confinement: "strict" })
+    t.armedAtMessage = false
+    fs.toggleClassic()
+    t.ok(fs.classicArmed && fs.armed && t.armedAtMessage, "x arms, before its message")
+    fs.disarm()
+    fs._showCard({ store: "flatpak", id: "org.gimp.GIMP", name: "GIMP", permissions: {}, sandboxEscapes: esc })
+    t.armedAtMessage = false
+    fs.overrides = "Context.filesystems=home"; fs.queue()
+    t.ok(fs.queueArmed && fs.armed && t.armedAtMessage, "an override arms, before its message")
+    fs.disarm(); fs.overrides = ""
+    t.ok(!fs.armed, "and disarm() clears that too")
+    fs.card = null
 
     // ---- #10: a running apply blocks edits and stays visible ------------
     // model.sh runs this on a PATH where nixarchy-apply is a stub.
