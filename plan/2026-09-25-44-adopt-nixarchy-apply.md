@@ -205,9 +205,13 @@ the Edit tool. None is expected, since `flake.nix` already runs
    `gh issue view 986 …`).
 8. **Whole-repo gate.** Run `nix flake check`, which runs
    `checks.shellcheck` and `checks.cli` (`tests/cli.sh` offline, in the
-   sandbox), and `nix fmt -- --ci`.
-   → Verify that both exit 0. `nix flake check` builds only the check
-   derivations and switches nothing.
+   sandbox).
+   → Verify that it exits 0. `nix flake check` builds only the check
+   derivations and switches nothing. *Deviation, made while implementing:*
+   `nix fmt -- --ci` is dropped. This repository's formatter is plain
+   `nixfmt`, which rejects `--ci`. `nixfmt --check` already fails on
+   `main`'s `flake.nix` and `module.nix`. CI (`.github/workflows/check.yml`)
+   doesn't run it. This PR changes no `.nix` file.
 9. **One-time contract check on p620 (read-only).**
    `nixarchy-apply --status --json | jq -e 'keys == ["exit","invocation","result","state"]'`
    → Verify that it exits 0. The fixture shape then matches the real
@@ -232,7 +236,7 @@ Run on p620. Every one runs against stubs only.
 | `assert_isolated` called directly with `NIXARCHY_FLATSNAP_FLAKE_FILE` unset, then `/etc/nixarchy/flake`, then a fixture | `ABORT`, `ABORT`, then pass |
 | `bash tests/model.sh` | `model: N passed, 0 failed` |
 | `nix flake check` | exit 0 (shellcheck, cli, manifest and the rest of `checks`) |
-| `nix fmt -- --ci` | exit 0 |
+| `git diff --name-only origin/main -- '*.nix'` | empty: no `.nix` file changed (see step 8) |
 | `grep -n 'journalctl\|systemctl\|nixarchy-rebuild' bin/nixarchy-flatsnap` | only the follow line, the stop and reset-failed lines, `UNIT`, and comments |
 | `nixarchy-apply --status --json \| jq -e 'keys == ["exit","invocation","result","state"]'` | exit 0. This is the only nixarchy-apply command in this plan. |
 
