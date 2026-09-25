@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 44
 spec: spec/2026-09-25-44-adopt-nixarchy-apply.md
 ---
