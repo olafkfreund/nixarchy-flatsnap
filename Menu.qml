@@ -81,6 +81,7 @@ Item {
     if (text.length === 0 || typeof item.Accessible.announce !== "function") return
     item.Accessible.announce(text, urgent ? Accessible.Assertive : Accessible.Polite)
   }
+  function announceCard() { if (fs.card) root.announce(cardCol, cardCol.Accessible.name + ". " + cardCol.trustSummary, false) }
 
   // One line of plain text in the menu's colours. Everything shown here
   // came from a store or a build log, so it is never markup.
@@ -243,7 +244,15 @@ Item {
           clip: true
 
           // One Flickable for every card: a new app starts at its top.
-          Connections { target: fs; function onCardChanged() { cardView.contentY = 0 } }
+          // The keyboard stays on the keys, not the card: say which app it is (#26).
+          Connections {
+            target: fs
+            function onCardChanged() {
+              cardView.contentY = 0
+              // Later: cardCol's bindings on fs.card may not have run yet.
+              if (fs.card) Qt.callLater(root.announceCard)
+            }
+          }
           // A footer line appearing (the armed message) takes height from
           // the bottom: keep what was at the bottom edge in sight (#36).
           property real _lastHeight: 0
@@ -255,6 +264,22 @@ Item {
             spacing: Style.space(6)
             readonly property var c: fs.card || ({})
             readonly property bool isSnap: c.store === "snap"
+
+            // One named group per app; its description is what the urgent
+            // lines below say, so it is heard without reading them all (#26).
+            // The escape part reads escBlock's own state, never a copy of it.
+            Accessible.role: Accessible.Grouping
+            Accessible.name: (c.name || c.id || "") + ", " + (isSnap ? "Snap" : "Flatpak")
+            Accessible.description: trustSummary
+            readonly property string trustSummary: {
+              var v = c.verified
+              var s = v === true ? "publisher verified" : v === false ? "publisher not verified" : "publisher verification unknown"
+              if (!isSnap && escBlock.escList.length > 0) s += ", escapes its sandbox"
+              else if (!isSnap && escBlock.notChecked) s += ", sandbox escapes not checked"
+              if (!isSnap && c.permissions === null) s += ", permissions unknown"
+              if (isSnap && fs.classic) s += ", classic confinement, runs without a sandbox"
+              return s
+            }
 
             Line { text: (cardCol.c.name || "") + "   (" + (cardCol.isSnap ? "Snap" : "Flatpak") + ": " + (cardCol.c.id || "") + ")"; font.pixelSize: Style.font.heading; width: parent.width }
             Line { text: cardCol.c.summary || ""; width: parent.width }
