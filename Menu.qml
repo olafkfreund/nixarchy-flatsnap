@@ -263,19 +263,38 @@ Item {
             }
             Line { text: "license: " + (cardCol.c.license || "unknown"); width: parent.width }
 
+            // Flatpak: what the app's own manifest asks for that is on the
+            // CLI's escape list (manifestEscapes), with what each grants. A
+            // label, not a second Enter. Only the heading is urgent: most
+            // popular apps have one, and an all-red block teaches people to
+            // skip red. null (failed lookup) is the UNKNOWN line below; a
+            // card with permissions but no list is an older CLI, so say so.
+            Column {
+              id: escBlock
+              readonly property var escList: Array.isArray(cardCol.c.manifestEscapes) ? cardCol.c.manifestEscapes : []
+              readonly property bool notChecked: cardCol.c.manifestEscapes === undefined
+                                                 && cardCol.c.permissions != null && typeof cardCol.c.permissions === "object"
+              visible: !cardCol.isSnap && (escList.length > 0 || notChecked)
+              width: parent.width
+              Line {
+                width: parent.width
+                color: Color.urgent
+                text: escBlock.notChecked ? "sandbox escapes: not checked (no list from nixarchy-flatsnap)" : "escapes its sandbox"
+              }
+              Line {
+                visible: escBlock.escList.length > 0
+                width: parent.width
+                text: "  " + escBlock.escList.map(function (e) { return e.entry + ": " + e.says }).join("\n  ")
+              }
+            }
+
             // Flatpak: what the sandbox lets it reach. null is a failed
             // lookup: unknown, never "none listed".
             Line {
               visible: !cardCol.isSnap
               width: parent.width
               color: cardCol.c.permissions === null ? Color.urgent : Color.menu.text
-              text: {
-                if (cardCol.c.permissions === null) return "permissions: UNKNOWN (the Flathub lookup failed)"
-                var p = cardCol.c.permissions || {}
-                var out = []
-                for (var key in p) out.push(key + ": " + (Array.isArray(p[key]) ? p[key].join(", ") : JSON.stringify(p[key])))
-                return out.length ? "permissions\n  " + out.join("\n  ") : "permissions: none listed"
-              }
+              text: fs.permissionText(cardCol.c.permissions)
             }
             Row {
               visible: !cardCol.isSnap
