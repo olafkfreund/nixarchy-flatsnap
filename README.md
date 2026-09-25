@@ -188,6 +188,12 @@ the list.
 | `Session Bus Policy.org.freedesktop.Flatpak=talk` or `own` | running commands outside the sandbox |
 | `System Bus Policy.<any name>=talk` or `own` | talking to system services |
 
+The card also checks the app's own permissions against this list. Matches
+are listed under **escapes its sandbox**, each with what it grants. That is
+a label, not a second `Enter`, and most popular apps have at least one
+(often `devices=all` or `filesystems=host`). Bus access is shown as
+`talk`/`own` lines, and a name ending in `.*` counts as every name under it.
+
 ## Rollback
 
 Un-declare the app and apply. A NixOS rollback restores which apps are

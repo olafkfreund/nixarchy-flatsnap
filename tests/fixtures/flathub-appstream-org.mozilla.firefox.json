@@ -1,0 +1,16 @@
+{
+  "name": "Firefox",
+  "summary": "Fast, Private & Safe Web Browser",
+  "developer_name": "Mozilla",
+  "project_license": "MPL-2.0",
+  "metadata": {
+    "flathub::verification::timestamp": "1675948428",
+    "flathub::verification::login_is_organization": false,
+    "flathub::manifest": "https://hg.mozilla.org/mozilla-central/file/tip/browser/installer/linux/app/flatpak",
+    "flathub::verification::verified": true,
+    "flathub::verification::method": "manual",
+    "flathub::verification::login_name": null,
+    "flathub::verification::login_provider": null,
+    "flathub::verification::website": null
+  }
+}

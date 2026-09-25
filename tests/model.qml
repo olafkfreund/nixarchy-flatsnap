@@ -205,6 +205,18 @@ ShellRoot {
     fs.overrides = "Context.filesystems=xdg-pictures:ro Context.sockets=ssh-auth"; fs.queue()
     t.ok(fs.message.indexOf("ESCAPES") >= 0 && fs.message.indexOf("ssh-auth") >= 0, "mixed: the escape is named: " + fs.message)
     fs.disarm()
+    // host:ro, ~/Games and !host above are the values tests/cli.sh checks
+    // against the manifest matcher (org.example.Shapes): keep them in step.
+
+    // ---- #27: the card's permissions text --------------------------------
+    t.ok(fs.permissionText(null).indexOf("UNKNOWN") >= 0, "null permissions: UNKNOWN")
+    t.ok(fs.permissionText({}) === "permissions: none listed", "{}: none listed: " + fs.permissionText({}))
+    t.ok(fs.permissionText({ devices: ["dri"] }).indexOf("devices: dri") >= 0, "a list: key: values")
+    var bt = fs.permissionText({ "session-bus": { talk: ["org.freedesktop.Flatpak", "a.b"], own: ["c.d"] },
+                                 "system-bus": { talk: ["org.freedesktop.login1"] } })
+    t.ok(bt.indexOf("session-bus talk: org.freedesktop.Flatpak, a.b") >= 0 && bt.indexOf("session-bus own: c.d") >= 0
+         && bt.indexOf("system-bus talk: org.freedesktop.login1") >= 0 && bt.indexOf("{\"") < 0,
+         "bus policies: talk/own lines, no JSON: " + bt)
 
     // ---- #28: whole overrides, so a section may contain spaces ----------
     // argv after the second Enter: the values that follow each --override.

@@ -246,7 +246,10 @@ QtObject {
 
   // "<override>: <what it grants>" when the card's sandboxEscapes (from the
   // CLI) lists it, else "". A card without the list is an older CLI: every
-  // override counts, so losing the list warns more, never less.
+  // override counts, so losing the list warns more, never less. The app's
+  // own permissions are matched in the CLI (MANIFEST_ESCAPES_JQ in
+  // bin/nixarchy-flatsnap); keep the two rules the same (the CLI adds only
+  // the ".*" bus-name wildcard, which manifests use).
   function _escapes(o) {
     var list = card ? card.sandboxEscapes : undefined
     if (!Array.isArray(list)) return o + ": not checked (no list from nixarchy-flatsnap)"
@@ -259,6 +262,24 @@ QtObject {
         return o + ": " + e.says
     }
     return ""
+  }
+
+  // The card's permissions text. null is a failed lookup: unknown, never
+  // "none listed". Bus policies ({talk: [...], own: [...]}) read as one
+  // line per policy, not JSON. Store text: shown as plain text only.
+  function permissionText(p) {
+    if (p === null) return "permissions: UNKNOWN (the Flathub lookup failed)"
+    p = p || {}
+    var out = []
+    for (var k in p) {
+      var v = p[k]
+      if (Array.isArray(v)) out.push(k + ": " + v.join(", "))
+      else if (v && typeof v === "object"
+               && Object.keys(v).every(function (pol) { return Array.isArray(v[pol]) }))
+        for (var pol in v) out.push(k + " " + pol + ": " + v[pol].join(", "))
+      else out.push(k + ": " + JSON.stringify(v))
+    }
+    return out.length ? "permissions\n  " + out.join("\n  ") : "permissions: none listed"
   }
 
   // One override from the front of the text. Same grammar as OV_SEC, OV_KEY

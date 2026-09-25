@@ -1,0 +1,49 @@
+{
+  "metadata": {
+    "permissions": {
+      "session-bus": {
+        "own": [
+          "org.mozilla.firefox.*",
+          "org.mpris.MediaPlayer2.firefox.*"
+        ],
+        "talk": [
+          "org.gtk.vfs.*",
+          "org.a11y.Bus",
+          "org.freedesktop.FileManager1"
+        ]
+      },
+      "system-bus": {
+        "talk": [
+          "org.freedesktop.NetworkManager"
+        ]
+      },
+      "devices": [
+        "all"
+      ],
+      "shared": [
+        "network",
+        "ipc"
+      ],
+      "filesystems": [
+        "xdg-config/gtk-3.0:ro",
+        "xdg-download",
+        "/run/.heim_org.h5l.kcm-socket",
+        "xdg-run/speech-dispatcher:ro"
+      ],
+      "features": [
+        "devel"
+      ],
+      "sockets": [
+        "x11",
+        "wayland",
+        "pulseaudio",
+        "fallback-x11",
+        "pcsc",
+        "cups"
+      ],
+      "persistent": [
+        ".mozilla"
+      ]
+    }
+  }
+}
