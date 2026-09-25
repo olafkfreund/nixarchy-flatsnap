@@ -613,18 +613,20 @@ cmd_preflight() {
 state_hash() { jq -cS . <<<"$STATE" | sha256sum | cut -c1-64; }
 
 # The unit a rebuild runs in: nixarchy-apply --detach's own
-# (nixarchy-apply:53), so a terminal --detach and a panel apply see each
+# (nixarchy-apply:122), so a terminal --detach and a panel apply see each
 # other running and refuse, and systemd refuses a second start of it.
-# ponytail: nixarchy's unit name and SubState read directly; ask
-# nixarchy-apply --status/--log once nixarchy has them (#23's follow-up).
+# flatsnap starts it itself, not through --detach, until --detach builds
+# only what its caller checked (nixarchy#986): see cmd_apply.
 UNIT=nixarchy-rebuild
 marker() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/nixarchy-flatsnap/apply"; }
-unit_prop() { systemctl --user show -p "$1" --value "$UNIT" 2>/dev/null || true; }
 die3() { jq -cn --arg e "$1" '{error: $e}'; exit 3; }
 
 # ---- what nixarchy says about the rebuild (#44) -----------------------------
 # The one place flatsnap asks nixarchy about the rebuild. Anything nixarchy's
 # interface gets wrong for the panel is mapped here, and nowhere else.
+# ponytail: the mapping below exists for nixarchy#986; when it lands,
+# nixarchy_status loses its correction, nixarchy_log its sed, and
+# nixarchy_follow becomes nixarchy-apply --log --follow.
 NIXARCHY_TOO_OLD="flatsnap needs nixarchy d3f2cef or later (nixarchy#969 and #981, 2026-09-24): update the nixarchy input and rebuild"
 
 # nixarchy-apply --status --json (nixarchy#981; the JSON is its stable
@@ -647,6 +649,23 @@ nixarchy_status() {
     | {state: (if .invocation == null then "none" else .state end),
        result, exit, invocationId: (.invocation // "")}' \
     <<<"$j" 2>/dev/null || die "$NIXARCHY_TOO_OLD"
+}
+
+# One run's log, from its start, through nixarchy-apply --log (nixarchy#981).
+# Its lines are journalctl's short format until nixarchy#986 passes -o cat:
+# the `-- No entries --` style markers go, and the `<date> <host>
+# <ident>[<pid>]: ` prefix is cut up to the line's first bracket, which can
+# only be the pid's, so no text inside a message is ever removed.
+nixarchy_log() {
+  nixarchy-apply --log --invocation "$1" | sed -uE '/^-- .* --$/d; s/^[^][]*\[[0-9]+\]: //'
+}
+
+# The same run, followed. Not nixarchy-apply --log --follow: journalctl -f
+# with no -n starts at the last 10 lines, and a panel re-attaching to a
+# running build would lose the rest (nixarchy#986,
+# https://github.com/olafkfreund/nixarchy/issues/986#issuecomment-5828269098).
+nixarchy_follow() {
+  journalctl --user -u "$UNIT" --invocation="$1" -o cat --no-pager -n 2000 -f
 }
 
 # pkexec, because the panel has no tty for a sudo password; Omarchy's polkit
@@ -798,18 +817,21 @@ cmd_apply_status() {
 # One run's log from the journal, from its start: the invocation ID keeps an
 # earlier run's lines out. --follow keeps reading until killed.
 cmd_apply_log() {
-  local id="" follow=()
+  local id="" follow="" st
   while [ $# -gt 0 ]; do
     case $1 in
-      --follow) follow=(-f) ;;
+      --follow) follow=1 ;;
       *) [[ $1 =~ ^[0-9a-f]{32}$ ]] || die "usage: nixarchy-flatsnap apply-log [<invocationId>] [--follow]"
          id=$1 ;;
     esac
     shift
   done
-  [ -n "$id" ] || id=$(unit_prop InvocationID)
+  if [ -z "$id" ]; then
+    st=$(nixarchy_status) || { printf '%s\n' "$st"; exit 2; }
+    id=$(jq -r .invocationId <<<"$st")
+  fi
   [ -n "$id" ] || die "no rebuild to show"
-  journalctl --user -u "$UNIT" --invocation="$id" -o cat --no-pager -n 2000 "${follow[@]}"
+  if [ -n "$follow" ]; then nixarchy_follow "$id"; else nixarchy_log "$id"; fi
 }
 
 main() {
