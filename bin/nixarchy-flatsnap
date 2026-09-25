@@ -535,21 +535,19 @@ cmd_rm() {
 
 # ---- preflight / apply ------------------------------------------------------
 
-# The flake nixarchy-apply will write. It bakes programs.nixarchy.flake in as
-# its own fallback (`flake="${NIXARCHY_FLAKE:-<that>}"`), so read it from
-# there: a hardcoded /etc/nixos would evaluate a different flake than the
-# one apply rebuilds, for anyone who moved theirs.
+# The flake nixarchy-apply rebuilds: NIXARCHY_FLAKE, as nixarchy-apply itself
+# reads it first, else programs.nixarchy.flake as nixarchy publishes it in
+# /etc/nixarchy/flake (nixarchy#969). A hardcoded /etc/nixos would evaluate
+# a different flake than the one apply rebuilds, for anyone who moved theirs.
+# NIXARCHY_FLATSNAP_FLAKE_FILE is for tests only (tests/isolate.sh): it
+# grants nothing NIXARCHY_FLAKE does not already.
+flake_file() { printf '%s' "${NIXARCHY_FLATSNAP_FLAKE_FILE:-/etc/nixarchy/flake}"; }
 flake() {
   if [ -n "${NIXARCHY_FLAKE:-}" ]; then printf '%s' "$NIXARCHY_FLAKE"; return; fi
-  local a d=""
-  if a=$(command -v nixarchy-apply 2>/dev/null); then
-    # shellcheck disable=SC2016 # a literal ${...}: the line being matched
-    d=$(sed -n 's/^flake="\${NIXARCHY_FLAKE:-\(.*\)}"$/\1/p' "$a" | head -1)
-  fi
-  # ponytail: sed over nixarchy-apply's source until nixarchy exposes the
-  # flake it rebuilds; then ask it instead. Stderr, so the panel's JSON is clean.
-  [ -n "$d" ] || echo "nixarchy-flatsnap: could not read the flake path from nixarchy-apply; using /etc/nixos (set NIXARCHY_FLAKE to override)" >&2
-  printf '%s' "${d:-/etc/nixos}"
+  local d
+  d=$(cat "$(flake_file)" 2>/dev/null) || return 1
+  [[ $d == /* ]] || return 1
+  printf '%s' "$d"
 }
 
 # One evaluation of this host's configuration, answering what apply needs
@@ -560,12 +558,17 @@ flake() {
 #   - what changes against the flake's copy, i.e. since the last apply?
 # The file is checked first, so a hand edit is refused before any prompt.
 cmd_preflight() {
-  local host ev fp
+  local host ev fp fl st
   host=$(uname -n)
   command -v nixarchy-apply >/dev/null || die "nixarchy-apply not found: is this nixarchy?"
+  # What this needs of nixarchy, asked for rather than read off a version:
+  # the flake file even when NIXARCHY_FLAKE is set, since it is the evidence.
+  [ -f "$(flake_file)" ] || die "$(flake_file) is missing: $NIXARCHY_TOO_OLD"
+  st=$(nixarchy_status) || { printf '%s\n' "$st"; exit 2; }
+  fl=$(flake) || die "$(flake_file) does not name an absolute path: $NIXARCHY_TOO_OLD"
   load_state
   check_entries
-  ev=$(nix eval --json "$(flake)#nixosConfigurations.\"$host\"" --apply '
+  ev=$(nix eval --json "$fl#nixosConfigurations.\"$host\"" --apply '
     c: let f = c.config.programs.nixarchy.flatsnap or { }; in {
       hasModule = (c.options.programs.nixarchy or { }) ? flatsnap;
       uninstallUnmanaged = c.config.services.flatpak.uninstallUnmanaged or false;
@@ -575,7 +578,7 @@ cmd_preflight() {
         flatpaks = map (p: { inherit (p) appId overrides; }) (f.flatpaks or [ ]);
         snaps = map (s: { inherit (s) name channel classic; }) (f.snaps or [ ]);
       };
-    }' 2>/dev/null) || die "could not evaluate nixosConfigurations.$host in $(flake)"
+    }' 2>/dev/null) || die "could not evaluate nixosConfigurations.$host in $fl"
   fp=$(installed_ids flatpak) || die "could not list installed Flatpaks, so preflight cannot say what apply would remove"
   [ "$fp" != null ] || fp='[]'   # no flatpak: nothing installed to remove
   jq -cn --argjson e "$ev" --argjson fp "$fp" --arg host "$host" --argjson st "$STATE" --arg hash "$(state_hash)" '
@@ -619,6 +622,26 @@ marker() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/nixarchy-flatsnap/
 unit_prop() { systemctl --user show -p "$1" --value "$UNIT" 2>/dev/null || true; }
 die3() { jq -cn --arg e "$1" '{error: $e}'; exit 3; }
 
+# ---- what nixarchy says about the rebuild (#44) -----------------------------
+# The one place flatsnap asks nixarchy about the rebuild. Anything nixarchy's
+# interface gets wrong for the panel is mapped here, and nowhere else.
+NIXARCHY_TOO_OLD="flatsnap needs nixarchy d3f2cef or later (nixarchy#969 and #981, 2026-09-24): update the nixarchy input and rebuild"
+
+# nixarchy-apply --status --json (nixarchy#981; the JSON is its stable
+# contract), checked field by field. An older nixarchy-apply exits 2 on the
+# unknown flag; its printf-built JSON is refused, not guessed at, if it
+# does not parse.
+nixarchy_status() {
+  local j
+  command -v nixarchy-apply >/dev/null || die "nixarchy-apply not found: is this nixarchy?"
+  j=$(nixarchy-apply --status --json 2>/dev/null) || die "$NIXARCHY_TOO_OLD"
+  jq -ce 'select(type == "object"
+      and (.state | IN("none", "running", "succeeded", "failed"))
+      and (.result | type == "string") and (.exit | type == "number")
+      and (.invocation == null or ((.invocation | type == "string") and (.invocation | test("^[0-9a-f]{32}$")))))' \
+    <<<"$j" 2>/dev/null || die "$NIXARCHY_TOO_OLD"
+}
+
 # pkexec, because the panel has no tty for a sudo password; Omarchy's polkit
 # agent asks on screen. Unless sudo needs no password at all: then nh's
 # `passwordless` asks nothing the user has not already waived, and a polkit
@@ -642,7 +665,7 @@ elevation() {
 # unit checks it all again under its own lock, which it holds through the
 # copy and the build: the lock cannot pass from this process to the unit.
 cmd_apply() {
-  local pf expect="" in_unit="" want sub id hash err
+  local pf expect="" in_unit="" want sub id hash err fl
   while [ $# -gt 0 ]; do
     case $1 in
       --expect)
@@ -676,6 +699,8 @@ cmd_apply() {
   if [ -f "$(file)" ]; then write_state <<<"$STATE"; load_state; fi
   # A terminal apply with no --expect is pinned to what was just checked.
   hash=$(state_hash)
+  # The flake preflight just evaluated, for the unit to rebuild.
+  fl=$(flake) || die "$(flake_file) does not name an absolute path: $NIXARCHY_TOO_OLD"
   # A finished run is kept by RemainAfterExit; clear it, as --detach does.
   sub=$(unit_prop SubState)
   case $sub in
@@ -697,7 +722,7 @@ cmd_apply() {
     --setenv=PATH="$PATH" \
     --setenv=XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" \
     --setenv=XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}" \
-    --setenv=NIXARCHY_FLAKE="$(flake)" \
+    --setenv=NIXARCHY_FLAKE="$fl" \
     --setenv=NH_ELEVATION_STRATEGY="$(elevation)" \
     --setenv=NO_COLOR=1 \
     -- "$(readlink -f "$0")" apply --in-unit --expect "$hash" 2>&1) ||

@@ -348,7 +348,6 @@ esac
 }
 # Like the real one: copies flatsnap.nix from where it reads it (line 117).
 apply_stub '# copies apps services advanced flatsnap
-flake="${NIXARCHY_FLAKE:-/srv/their-flake}"
 echo invoked >>"$APPLY_LOG"
 f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
 echo "elevation=$NH_ELEVATION_STRATEGY" >"$ELEV_LOG"
@@ -424,8 +423,8 @@ pa() { env PATH="$P" bash "$cli" "$@"; }
 
 export NIX_EVAL_ANSWER='{"hasModule":true,"uninstallUnmanaged":false,"declared":["org.gnome.Calculator"]}'
 check "preflight ready" '.ok and .willRemove == []' pa preflight
-# The flake preflight evaluates is the one nixarchy-apply falls back to, not /etc/nixos.
-grep -q '^/srv/their-flake#' "$NIX_LOG" && ok || bad "preflight evaluated $(cat "$NIX_LOG"), not nixarchy-apply's flake"
+# The flake preflight evaluates is the one nixarchy publishes (#44), not /etc/nixos.
+grep -q '^/srv/their-flake#' "$NIX_LOG" && ok || bad "preflight evaluated $(cat "$NIX_LOG"), not nixarchy's flake file"
 NIXARCHY_FLAKE=/tmp/override pa preflight >/dev/null
 grep -q '^/tmp/override#' "$NIX_LOG" && ok || bad "NIXARCHY_FLAKE not honoured: $(cat "$NIX_LOG")"
 # Elevation: pkexec unless sudo needs no password; an explicit choice wins.
@@ -448,12 +447,31 @@ APPLY_RC=3 pa apply >/dev/null
 jq -e '.nixarchyFlatsnapApply == {ok:false,exit:3,message:"nixarchy-apply exited 3"}' <<<"$(tail -1 "$JOURNAL")" >/dev/null &&
   [ "$(cat "$UNIT_RC")" = 3 ] && ok || bad "apply failure: rc=$(cat "$UNIT_RC") $(cat "$JOURNAL")"
 
-# A nixarchy-apply with no flake= line: fall back to /etc/nixos, and say so on
-# stderr only, so the panel still gets clean JSON on stdout.
+# #44: a nixarchy without the flake file or --status --json is refused by
+# name, with no fallback: exit 2, one {"error"} naming the version needed,
+# nothing evaluated and nothing started -- for preflight and for apply.
+too_old() {
+  local d=$1 v out rc; shift
+  for v in preflight apply; do
+    : >"$NIX_LOG"; : >"$SDRUN_LOG"
+    out=$(env "$@" PATH="$P" bash "$cli" "$v" 2>/dev/null); rc=$?
+    [ $rc -eq 2 ] && [ "$(wc -l <<<"$out")" -eq 1 ] && jq -e '.error | test("d3f2cef")' <<<"$out" >/dev/null &&
+      [ ! -s "$NIX_LOG" ] && [ ! -s "$SDRUN_LOG" ] && ok || bad "$d ($v): rc=$rc $out"
+  done
+}
+too_old "no flake file" NIXARCHY_FLATSNAP_FLAKE_FILE="$work/no-such-file"
+too_old "no flake file, NIXARCHY_FLAKE set" NIXARCHY_FLATSNAP_FLAKE_FILE="$work/no-such-file" NIXARCHY_FLAKE=/tmp/override
+printf '%s' relative/flake >"$work/relative-flake"
+too_old "relative flake path" NIXARCHY_FLATSNAP_FLAKE_FILE="$work/relative-flake"
+too_old "--status unknown (older nixarchy-apply)" STATUS_RC=2
+cp "$STATUS_FIXTURE" "$work/status.saved"
+for bogus in 'usage: nixarchy-apply' '{"state":"none"}' '{"state":"done","result":"","exit":0,"invocation":null}' \
+  '{"state":"none","result":"","exit":0,"invocation":"../x"}'; do
+  printf '%s\n' "$bogus" >"$STATUS_FIXTURE"
+  too_old "--status answer $bogus"
+done
+cp "$work/status.saved" "$STATUS_FIXTURE"
 apply_stub 'exit 0'
-out=$(pa preflight 2>"$work/err"); rc=$?
-[ $rc -eq 0 ] && jq -e '.ok' <<<"$out" >/dev/null && grep -q 'could not read the flake path' "$work/err" &&
-  grep -q '^/etc/nixos#' "$NIX_LOG" && ok || bad "flake fallback: rc=$rc out=$out err=$(cat "$work/err") nix=$(cat "$NIX_LOG")"
 
 # A flatpak that fails: preflight cannot say what apply would remove, so it
 # refuses rather than report nothing (#13 C8).
@@ -542,7 +560,6 @@ out=$(pa apply); rc=$?; j=$(cat "$JOURNAL")
 # ---- #23: apply runs in the nixarchy-rebuild unit ------------------------
 id=0123456789abcdef0123456789abcdef
 apply_stub '# copies apps services advanced flatsnap
-flake="${NIXARCHY_FLAKE:-/srv/their-flake}"
 echo invoked >>"$APPLY_LOG"
 f="$XDG_CONFIG_HOME/nixarchy/flatsnap.nix"; [ ! -f "$f" ] || cp "$f" "$COPIED"
 echo "elevation=$NH_ELEVATION_STRATEGY no_color=${NO_COLOR:-}" >"$ELEV_LOG"
