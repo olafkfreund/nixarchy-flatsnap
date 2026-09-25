@@ -74,6 +74,14 @@ Item {
     logView.follow = logView.contentY >= logView.contentHeight - logView.height - 1
   }
 
+  // Say `text` through the screen reader (#26). Assertive interrupts it:
+  // kept for a pending confirmation. Qt before 6.8 has no announce(); the
+  // menu then works as before, silently.
+  function announce(item, text, urgent) {
+    if (text.length === 0 || typeof item.Accessible.announce !== "function") return
+    item.Accessible.announce(text, urgent ? Accessible.Assertive : Accessible.Polite)
+  }
+
   // One line of plain text in the menu's colours. Everything shown here
   // came from a store or a build log, so it is never markup.
   component Line: Text {
@@ -352,9 +360,15 @@ Item {
           clip: true
           model: root.opened ? fs.rows : []
           currentIndex: fs.cursor
+          Accessible.role: Accessible.List
+          Accessible.name: fs.tab === 0 ? "Add" : "Declared"
           delegate: Rectangle {
             required property var modelData
             required property int index
+            // The row's own text, and the cursor, which is otherwise only colour (#26).
+            Accessible.role: Accessible.ListItem
+            Accessible.name: rowText.text
+            Accessible.selected: index === fs.cursor
             width: list.width
             height: rowText.implicitHeight + Style.space(8)
             radius: Style.cornerRadius
