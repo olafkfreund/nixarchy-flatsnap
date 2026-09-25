@@ -348,3 +348,21 @@ work. The PR merges on the local checks (step 9) and CI.
   form through `queue()`, which goes through `_splitOverrides`.
 - Before any edit: `tests/cli.sh` gave 182 passed, 0 failed, and
   `tests/model.sh` gave 147 passed, 0 failed.
+
+**2026-09-25, steps 2-9 done.**
+- Deviation (step 4, coverage only): besides the listed shapes, the Shapes
+  fixture has `"system-bus": "odd"` (a non-object bus value, skipped) and a
+  `session-bus` `own` of its own name (not flagged). The expected entries
+  are unchanged: `filesystems=host:ro` and
+  `session-bus talk org.freedesktop.*`.
+- Step 6: the shared matcher values were already in `tests/model.qml`
+  (`host:ro`, `~/Games` and `!host` in the #12 block, and the Bus Policy
+  form through `queue()` / `_splitOverrides` in the #28 block). A comment
+  ties them to `tests/cli.sh`'s Shapes case, and the new tests cover
+  `permissionText`.
+- Step 9: `tests/cli.sh` gave 189 passed, 0 failed. Removing the `.*`
+  clause fails only the Shapes case, and it was restored.
+  `tests/model.sh` gave 151 passed, 0 failed. `qmlformat` parses
+  `Menu.qml` and `FlatsnapModel.qml`, and `nix flake check -L` passes all
+  checks.
+- Steps 11-12 (razer) are deferred to the combined session after #26.
