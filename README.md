@@ -74,7 +74,12 @@ running build, or shows once how a build you started ended. While any
 rebuild runs, including one started from a terminal, a second apply is
 refused, and queuing and removing wait. To follow it from a terminal, run
 `nixarchy-flatsnap apply-log --follow`. `nixarchy-flatsnap apply-status`
-reports its state.
+reports its state, as `nixarchy-apply --status --json` gives it.
+
+flatsnap starts that unit itself rather than through `--detach`, and checks
+the file again inside it under its own lock. The reason is that `--detach`
+does not yet pass on the hash of what was checked
+([olafkfreund/nixarchy#986](https://github.com/olafkfreund/nixarchy/issues/986)).
 
 ## Install
 
@@ -103,6 +108,13 @@ Then enable it once: `omarchy plugin enable nixarchy.flatsnap`.
 - nixarchy's `nixarchy-apply` must copy `flatsnap.nix` into the flake. That lands with
   [olafkfreund/nixarchy#906](https://github.com/olafkfreund/nixarchy/pull/906), and
   `nixarchy-flatsnap preflight` tells you if yours does not do it yet.
+- nixarchy at commit `d3f2cef` or later. That commit brings `/etc/nixarchy/flake`
+  ([olafkfreund/nixarchy#969](https://github.com/olafkfreund/nixarchy/pull/969)),
+  which names the flake apply rebuilds, and `nixarchy-apply --status --json` / `--log`
+  ([olafkfreund/nixarchy#981](https://github.com/olafkfreund/nixarchy/pull/981)).
+  On an older nixarchy, apply stops at once with "flatsnap needs nixarchy
+  d3f2cef or later". It never guesses the flake. Update the nixarchy input
+  and rebuild.
 - The *Install → Flatpak & Snap* menu row is nixarchy's own
   ([olafkfreund/nixarchy#914](https://github.com/olafkfreund/nixarchy/pull/914)),
   which also ships this plugin by default. On nixarchy you need none of the

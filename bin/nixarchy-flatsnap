@@ -535,21 +535,19 @@ cmd_rm() {
 
 # ---- preflight / apply ------------------------------------------------------
 
-# The flake nixarchy-apply will write. It bakes programs.nixarchy.flake in as
-# its own fallback (`flake="${NIXARCHY_FLAKE:-<that>}"`), so read it from
-# there: a hardcoded /etc/nixos would evaluate a different flake than the
-# one apply rebuilds, for anyone who moved theirs.
+# The flake nixarchy-apply rebuilds: NIXARCHY_FLAKE, as nixarchy-apply itself
+# reads it first, else programs.nixarchy.flake as nixarchy publishes it in
+# /etc/nixarchy/flake (nixarchy#969). A hardcoded /etc/nixos would evaluate
+# a different flake than the one apply rebuilds, for anyone who moved theirs.
+# NIXARCHY_FLATSNAP_FLAKE_FILE is for tests only (tests/isolate.sh): it
+# grants nothing NIXARCHY_FLAKE does not already.
+flake_file() { printf '%s' "${NIXARCHY_FLATSNAP_FLAKE_FILE:-/etc/nixarchy/flake}"; }
 flake() {
   if [ -n "${NIXARCHY_FLAKE:-}" ]; then printf '%s' "$NIXARCHY_FLAKE"; return; fi
-  local a d=""
-  if a=$(command -v nixarchy-apply 2>/dev/null); then
-    # shellcheck disable=SC2016 # a literal ${...}: the line being matched
-    d=$(sed -n 's/^flake="\${NIXARCHY_FLAKE:-\(.*\)}"$/\1/p' "$a" | head -1)
-  fi
-  # ponytail: sed over nixarchy-apply's source until nixarchy exposes the
-  # flake it rebuilds; then ask it instead. Stderr, so the panel's JSON is clean.
-  [ -n "$d" ] || echo "nixarchy-flatsnap: could not read the flake path from nixarchy-apply; using /etc/nixos (set NIXARCHY_FLAKE to override)" >&2
-  printf '%s' "${d:-/etc/nixos}"
+  local d
+  d=$(cat "$(flake_file)" 2>/dev/null) || return 1
+  [[ $d == /* ]] || return 1
+  printf '%s' "$d"
 }
 
 # One evaluation of this host's configuration, answering what apply needs
@@ -560,12 +558,17 @@ flake() {
 #   - what changes against the flake's copy, i.e. since the last apply?
 # The file is checked first, so a hand edit is refused before any prompt.
 cmd_preflight() {
-  local host ev fp
+  local host ev fp fl st
   host=$(uname -n)
   command -v nixarchy-apply >/dev/null || die "nixarchy-apply not found: is this nixarchy?"
+  # What this needs of nixarchy, asked for rather than read off a version:
+  # the flake file even when NIXARCHY_FLAKE is set, since it is the evidence.
+  [ -f "$(flake_file)" ] || die "$(flake_file) is missing: $NIXARCHY_TOO_OLD"
+  st=$(nixarchy_status) || { printf '%s\n' "$st"; exit 2; }
+  fl=$(flake) || die "$(flake_file) does not name an absolute path: $NIXARCHY_TOO_OLD"
   load_state
   check_entries
-  ev=$(nix eval --json "$(flake)#nixosConfigurations.\"$host\"" --apply '
+  ev=$(nix eval --json "$fl#nixosConfigurations.\"$host\"" --apply '
     c: let f = c.config.programs.nixarchy.flatsnap or { }; in {
       hasModule = (c.options.programs.nixarchy or { }) ? flatsnap;
       uninstallUnmanaged = c.config.services.flatpak.uninstallUnmanaged or false;
@@ -575,7 +578,7 @@ cmd_preflight() {
         flatpaks = map (p: { inherit (p) appId overrides; }) (f.flatpaks or [ ]);
         snaps = map (s: { inherit (s) name channel classic; }) (f.snaps or [ ]);
       };
-    }' 2>/dev/null) || die "could not evaluate nixosConfigurations.$host in $(flake)"
+    }' 2>/dev/null) || die "could not evaluate nixosConfigurations.$host in $fl"
   fp=$(installed_ids flatpak) || die "could not list installed Flatpaks, so preflight cannot say what apply would remove"
   [ "$fp" != null ] || fp='[]'   # no flatpak: nothing installed to remove
   jq -cn --argjson e "$ev" --argjson fp "$fp" --arg host "$host" --argjson st "$STATE" --arg hash "$(state_hash)" '
@@ -610,14 +613,60 @@ cmd_preflight() {
 state_hash() { jq -cS . <<<"$STATE" | sha256sum | cut -c1-64; }
 
 # The unit a rebuild runs in: nixarchy-apply --detach's own
-# (nixarchy-apply:53), so a terminal --detach and a panel apply see each
+# (nixarchy-apply:122), so a terminal --detach and a panel apply see each
 # other running and refuse, and systemd refuses a second start of it.
-# ponytail: nixarchy's unit name and SubState read directly; ask
-# nixarchy-apply --status/--log once nixarchy has them (#23's follow-up).
+# flatsnap starts it itself, not through --detach, until --detach builds
+# only what its caller checked (nixarchy#986): see cmd_apply.
 UNIT=nixarchy-rebuild
 marker() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/nixarchy-flatsnap/apply"; }
-unit_prop() { systemctl --user show -p "$1" --value "$UNIT" 2>/dev/null || true; }
 die3() { jq -cn --arg e "$1" '{error: $e}'; exit 3; }
+
+# ---- what nixarchy says about the rebuild (#44) -----------------------------
+# The one place flatsnap asks nixarchy about the rebuild. Anything nixarchy's
+# interface gets wrong for the panel is mapped here, and nowhere else.
+# ponytail: the mapping below exists for nixarchy#986; when it lands,
+# nixarchy_status loses its correction, nixarchy_log its sed, and
+# nixarchy_follow becomes nixarchy-apply --log --follow.
+NIXARCHY_TOO_OLD="flatsnap needs nixarchy d3f2cef or later (nixarchy#969 and #981, 2026-09-24): update the nixarchy input and rebuild"
+
+# nixarchy-apply --status --json (nixarchy#981; the JSON is its stable
+# contract), checked field by field. An older nixarchy-apply exits 2 on the
+# unknown flag; its printf-built JSON is refused, not guessed at, if it
+# does not parse.
+nixarchy_status() {
+  local j
+  command -v nixarchy-apply >/dev/null || die "nixarchy-apply not found: is this nixarchy?"
+  j=$(nixarchy-apply --status --json 2>/dev/null) || die "$NIXARCHY_TOO_OLD"
+  jq -ce 'select(type == "object"
+      and (.state | IN("none", "running", "succeeded", "failed"))
+      and (.result | type == "string") and (.exit | type == "number")
+      and (.invocation == null or ((.invocation | type == "string") and (.invocation | test("^[0-9a-f]{32}$")))))
+    # In the panel'"'"'s field names. No invocation is no run: nixarchy answers
+    # "succeeded" for SubState=exited without one (nixarchy-apply:61-73).
+    # ponytail: a stopped unit that kept its InvocationID still reads as a
+    # result, not none; nixarchy#986 item 3, and its JSON carries no
+    # SubState to correct it from here.
+    | {state: (if .invocation == null then "none" else .state end),
+       result, exit, invocationId: (.invocation // "")}' \
+    <<<"$j" 2>/dev/null || die "$NIXARCHY_TOO_OLD"
+}
+
+# One run's log, from its start, through nixarchy-apply --log (nixarchy#981).
+# Its lines are journalctl's short format until nixarchy#986 passes -o cat:
+# the `-- No entries --` style markers go, and the `<date> <host>
+# <ident>[<pid>]: ` prefix is cut up to the line's first bracket, which can
+# only be the pid's, so no text inside a message is ever removed.
+nixarchy_log() {
+  nixarchy-apply --log --invocation "$1" | sed -uE '/^-- .* --$/d; s/^[^][]*\[[0-9]+\]: //'
+}
+
+# The same run, followed. Not nixarchy-apply --log --follow: journalctl -f
+# with no -n starts at the last 10 lines, and a panel re-attaching to a
+# running build would lose the rest (nixarchy#986,
+# https://github.com/olafkfreund/nixarchy/issues/986#issuecomment-5828269098).
+nixarchy_follow() {
+  journalctl --user -u "$UNIT" --invocation="$1" -o cat --no-pager -n 2000 -f
+}
 
 # pkexec, because the panel has no tty for a sudo password; Omarchy's polkit
 # agent asks on screen. Unless sudo needs no password at all: then nh's
@@ -642,7 +691,7 @@ elevation() {
 # unit checks it all again under its own lock, which it holds through the
 # copy and the build: the lock cannot pass from this process to the unit.
 cmd_apply() {
-  local pf expect="" in_unit="" want sub id hash err
+  local pf expect="" in_unit="" want st id hash err fl
   while [ $# -gt 0 ]; do
     case $1 in
       --expect)
@@ -657,9 +706,8 @@ cmd_apply() {
   [ -z "$in_unit" ] || apply_in_unit "$expect"
   # Before preflight: a running build holds the state lock until it ends,
   # and preflight would wait on it and then fail with a lock message.
-  case $(unit_prop SubState) in
-    running | start*) die3 "a rebuild is already running — l shows it" ;;
-  esac
+  st=$(nixarchy_status) || { printf '%s\n' "$st"; exit 2; }
+  [ "$(jq -r .state <<<"$st")" != running ] || die3 "a rebuild is already running — l shows it"
   # Not a bare assignment: under set -e a failing $(...) would end the script
   # here with nothing on stdout, and the panel would have no error to show.
   pf=$(cmd_preflight) || { printf '%s\n' "$pf"; exit 2; }
@@ -676,19 +724,19 @@ cmd_apply() {
   if [ -f "$(file)" ]; then write_state <<<"$STATE"; load_state; fi
   # A terminal apply with no --expect is pinned to what was just checked.
   hash=$(state_hash)
+  # The flake preflight just evaluated, for the unit to rebuild.
+  fl=$(flake) || die "$(flake_file) does not name an absolute path: $NIXARCHY_TOO_OLD"
   # A finished run is kept by RemainAfterExit; clear it, as --detach does.
-  sub=$(unit_prop SubState)
-  case $sub in
-    "" | dead) ;;
-    *) systemctl --user stop "$UNIT" 2>/dev/null || true
-       systemctl --user reset-failed "$UNIT" 2>/dev/null || true ;;
-  esac
+  # Always: a running one was refused above, and both are no-ops on a unit
+  # that is dead or gone.
+  systemctl --user stop "$UNIT" 2>/dev/null || true
+  systemctl --user reset-failed "$UNIT" 2>/dev/null || true
   jq -r '.changes[] | ({add: "+", remove: "−", change: "~"}[.op]) + " \(.store) \(.id)"
            + (if .detail == "" then "" else ": \(.detail)" end)' <<<"$pf"
   jq -r '.willRemove[] | "uninstallUnmanaged is on: this apply removes \(.)"' <<<"$pf"
   # The unit re-takes the lock; holding it here would only make it wait.
   exec {STATE_LOCK}>&-; STATE_LOCK=
-  # The unit's properties are --detach's (nixarchy-apply:49-58): no
+  # The unit's properties are --detach's (nixarchy-apply:118-127): no
   # NoNewPrivileges, since elevation goes through the setuid pkexec; no
   # rate limit on a bursty build log; no --collect, which unloads a failed
   # unit at once and then reads Result=success.
@@ -697,12 +745,13 @@ cmd_apply() {
     --setenv=PATH="$PATH" \
     --setenv=XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" \
     --setenv=XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}" \
-    --setenv=NIXARCHY_FLAKE="$(flake)" \
+    --setenv=NIXARCHY_FLAKE="$fl" \
     --setenv=NH_ELEVATION_STRATEGY="$(elevation)" \
     --setenv=NO_COLOR=1 \
     -- "$(readlink -f "$0")" apply --in-unit --expect "$hash" 2>&1) ||
     die3 "could not start the rebuild: ${err:-systemd-run failed}"
-  id=$(unit_prop InvocationID)
+  # Started either way: an unreadable status here costs the ID, not the run.
+  id=$(nixarchy_status 2>/dev/null | jq -r '.invocationId // ""' 2>/dev/null) || id=""
   echo "Rebuilding in the background. Follow it with: nixarchy-flatsnap apply-log --follow" >&2
   jq -nc --arg id "$id" '{nixarchyFlatsnapStarted: {invocationId: $id}}'
 }
@@ -744,13 +793,11 @@ apply_in_unit() {
   exit "$rc"
 }
 
-# The rebuild unit's state, as one JSON line. `none` is read from SubState
-# and InvocationID, never from Result: a unit that never ran reads
-# Result=success ExecMainStatus=0. `ours`: the marker names this run.
-# --ack <id> records that the panel has shown that run's result, the one
-# write here, and only to the marker.
+# The rebuild's state, as one JSON line: nixarchy's (nixarchy_status), plus
+# `ours`: the marker names this run. --ack <id> records that the panel has
+# shown that run's result, the one write here, and only to the marker.
 cmd_apply_status() {
-  local ack="" props sub res code id m mid mst=""
+  local ack="" st m mid mst=""
   case ${1:-} in
     "") ;;
     --ack) [[ ${2:-} =~ ^[0-9a-f]{32}$ ]] || die "--ack needs an invocation ID"; ack=$2 ;;
@@ -761,33 +808,30 @@ cmd_apply_status() {
   if [ -n "$ack" ] && [ "$mid" = "$ack" ]; then
     local tmp; tmp=$(mktemp "$m.XXXXXX"); printf '%s shown\n' "$ack" >"$tmp"; mv "$tmp" "$m"; mst=shown
   fi
-  props=$(systemctl --user show -p SubState,Result,ExecMainStatus,InvocationID "$UNIT" 2>/dev/null || true)
-  sub=$(sed -n 's/^SubState=//p' <<<"$props"); res=$(sed -n 's/^Result=//p' <<<"$props")
-  code=$(sed -n 's/^ExecMainStatus=//p' <<<"$props"); id=$(sed -n 's/^InvocationID=//p' <<<"$props")
-  jq -nc --arg sub "$sub" --arg res "$res" --arg code "$code" --arg id "$id" --arg mid "$mid" --arg mst "$mst" '
-    {state: (if $id == "" or $sub == "" or $sub == "dead" then "none"
-             elif $sub == "running" or ($sub | startswith("start")) then "running"
-             elif $sub == "exited" and $res == "success" then "succeeded"
-             else "failed" end),
-     result: $res, exit: (($code | tonumber?) // 0), invocationId: $id,
-     ours: ($id != "" and $mid == $id), shown: ($id != "" and $mid == $id and $mst == "shown")}'
+  st=$(nixarchy_status) || { printf '%s\n' "$st"; exit 2; }
+  jq -c --arg mid "$mid" --arg mst "$mst" '
+    . + {ours: (.invocationId != "" and $mid == .invocationId),
+         shown: (.invocationId != "" and $mid == .invocationId and $mst == "shown")}' <<<"$st"
 }
 
 # One run's log from the journal, from its start: the invocation ID keeps an
 # earlier run's lines out. --follow keeps reading until killed.
 cmd_apply_log() {
-  local id="" follow=()
+  local id="" follow="" st
   while [ $# -gt 0 ]; do
     case $1 in
-      --follow) follow=(-f) ;;
+      --follow) follow=1 ;;
       *) [[ $1 =~ ^[0-9a-f]{32}$ ]] || die "usage: nixarchy-flatsnap apply-log [<invocationId>] [--follow]"
          id=$1 ;;
     esac
     shift
   done
-  [ -n "$id" ] || id=$(unit_prop InvocationID)
+  if [ -z "$id" ]; then
+    st=$(nixarchy_status) || { printf '%s\n' "$st"; exit 2; }
+    id=$(jq -r .invocationId <<<"$st")
+  fi
   [ -n "$id" ] || die "no rebuild to show"
-  journalctl --user -u "$UNIT" --invocation="$id" -o cat --no-pager -n 2000 "${follow[@]}"
+  if [ -n "$follow" ]; then nixarchy_follow "$id"; else nixarchy_log "$id"; fi
 }
 
 main() {

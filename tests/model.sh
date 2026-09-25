@@ -18,7 +18,14 @@ unset NIXARCHY_FLATSNAP_FILE NIXARCHY_FLAKE NH_ELEVATION_STRATEGY INVOCATION_ID
 qs=$(readlink -f "$(command -v quickshell)")
 s="$d/stubs"; mkdir -p "$s"
 stub() { printf '#!/bin/sh\n%s\n' "$2" >"$s/$1"; chmod +x "$s/$1"; }
-stub nixarchy-apply 'echo invoked >>"$APPLY_LOG"; echo building; exit 0'
+# --status answers "no rebuild", as nixarchy-apply's interface does (#44).
+stub nixarchy-apply 'case "${1:-}" in
+  --status) echo "{\"state\":\"none\",\"result\":\"\",\"exit\":0,\"invocation\":null}"; exit 0 ;;
+esac
+echo invoked >>"$APPLY_LOG"; echo building; exit 0'
+# The flake file preflight reads: a fixture, never /etc/nixarchy/flake.
+export NIXARCHY_FLATSNAP_FLAKE_FILE="$d/etc-nixarchy-flake"
+printf '%s' /srv/their-flake >"$NIXARCHY_FLATSNAP_FLAKE_FILE"
 stub nix 'echo "$NIX_EVAL_ANSWER"'
 stub flatpak 'exit 0'
 stub sudo 'exit 1'
