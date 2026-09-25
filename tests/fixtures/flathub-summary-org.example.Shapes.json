@@ -1,0 +1,11 @@
+{
+  "metadata": {
+    "permissions": {
+      "filesystems": ["host:ro", "!host", "~/Games", "xdg-download"],
+      "session-bus": { "talk": ["org.freedesktop.*"], "own": ["org.example.Shapes"] },
+      "system-bus": "odd",
+      "features": ["devel"],
+      "shared": "odd"
+    }
+  }
+}

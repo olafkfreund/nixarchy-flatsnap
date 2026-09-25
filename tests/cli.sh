@@ -122,6 +122,22 @@ for e in 'Context filesystems host' 'Context filesystems host-os' 'Context files
   expect 'org.gnome.Calculator' "$(has_escape "$s" "$k" "$v")"
 done
 expect 'org.gnome.Calculator' 'all(.sandboxEscapes[]; .key != "features")'
+# The app's own permissions, against the same list (manifestEscapes). Real
+# recorded summaries: VS Code escapes five ways, Firefox two; entries in
+# manifest order. Firefox's own org.mozilla.firefox.* and :ro paths do not.
+expect 'com.visualstudio.code' '[.manifestEscapes[].entry] == ["devices=all", "sockets=ssh-auth",
+  "session-bus talk org.freedesktop.Flatpak", "filesystems=host", "system-bus talk org.freedesktop.login1"]
+  and all(.manifestEscapes[]; (.says | length) > 0)'
+expect 'org.mozilla.firefox'   '[.manifestEscapes[].entry] == ["system-bus talk org.freedesktop.NetworkManager", "devices=all"]'
+expect 'org.gnome.Calculator'  '.manifestEscapes == []'
+expect 'com.spotify.Client'    '.manifestEscapes == []'
+expect 'org.example.NoMeta'    '.manifestEscapes == []'
+# Unknown stays unknown: no summary is null, never "no escapes".
+expect 'org.example.NoSummary' '.permissions == null and .manifestEscapes == null'
+# Shapes: :ro still matches; !host, ~/Games and features=devel do not; a
+# wildcard bus name covers org.freedesktop.Flatpak; a non-list value is skipped.
+expect 'org.example.Shapes'    '[.manifestEscapes[].entry] == ["filesystems=host:ro", "session-bus talk org.freedesktop.*"]
+  and .manifestEscapes[1].says == "running commands outside the sandbox"'
 
 # ---- search ---------------------------------------------------------------
 run() { bash "$cli" "$@"; }
