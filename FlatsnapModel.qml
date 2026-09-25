@@ -32,6 +32,8 @@ QtObject {
   property string pendingDelete: ""   // "store:id" waiting for y
   property var willRemove: []         // from preflight, when uninstallUnmanaged is on
   property bool applyArmed: false
+  // Any confirmation waiting for its second key (#26).
+  readonly property bool armed: pendingDelete !== "" || applyArmed || classicArmed || queueArmed
 
   property var applyLog: []
   property bool applying: false
@@ -366,7 +368,7 @@ QtObject {
   // keys that only scroll it: reading the card before confirming must not
   // cancel (decided by the user, #15). Typed into a field, j k are text.
   function cancelsConfirm(k, bare, typing) {
-    if (!(pendingDelete !== "" || applyArmed || classicArmed || queueArmed)) return false
+    if (!armed) return false
     if (k === Qt.Key_Shift || k === Qt.Key_Control || k === Qt.Key_Alt || k === Qt.Key_Meta) return false
     if (k === Qt.Key_Y || k === Qt.Key_A || k === Qt.Key_X) return false
     if ((k === Qt.Key_Return || k === Qt.Key_Enter) && queueArmed) return false
