@@ -154,8 +154,11 @@ the Edit tool. None is expected, since `flake.nix` already runs
      - `:543-549` (already running) must pass on the fixture.
 
    → Verify with `bash tests/cli.sh` (0 failed). Grep
-   `bin/nixarchy-flatsnap` for `systemctl --user show` and `unit_prop`: no
-   matches.
+   `bin/nixarchy-flatsnap` for `systemctl --user show` and `unit_prop`: the
+   only matches left are `unit_prop`'s definition and its one use in
+   `cmd_apply_log`. Step 5 deletes both. *Deviation, made while
+   implementing:* the plan said "no matches" here, but the log's missing-ID
+   lookup is step 5's work.
 5. **`bin/nixarchy-flatsnap`: log (decision 2, split).**
    - `nixarchy_log` handles the non-follow read.
    - `--follow` keeps calling `journalctl` inside the adapter block, with

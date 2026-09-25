@@ -592,8 +592,9 @@ for sub in running start-pre; do
   [ $rc -eq 3 ] && [ "$(wc -l <<<"$out")" -eq 1 ] && jq -e '.error | test("already running")' <<<"$out" >/dev/null &&
     [ ! -s "$SDRUN_LOG" ] && [ ! -s "$APPLY_LOG" ] && ok || bad "already running ($sub): rc=$rc $out"
 done
-# 3: a finished unit is stopped and reset before the new start.
-for sub in failed exited; do
+# 3: the unit is stopped and reset before every start, whatever it was (#44):
+# a running one was refused, and both are no-ops on one that is dead or gone.
+for sub in failed exited dead ""; do
   unit "$sub" exit-code 1 "$id"; reset_logs; pa apply --expect "$hash" >/dev/null
   [ "$(grep -E '^--user (stop|reset-failed) ' "$SYSTEMCTL_LOG" | tr '\n' ';')" = "--user stop nixarchy-rebuild;--user reset-failed nixarchy-rebuild;" ] &&
     [ -s "$SDRUN_LOG" ] && ok || bad "reset finished ($sub): $(cat "$SYSTEMCTL_LOG")"
@@ -630,6 +631,7 @@ st() { pa apply-status "$@"; }
 mkdir -p "$XDG_STATE_HOME/nixarchy-flatsnap"; printf '%s\n' "$id new" >"$XDG_STATE_HOME/nixarchy-flatsnap/apply"
 unit dead success 0 "";               check "status dead" '.state == "none"' st
 unit "" success 0 "";                 check "status no unit" '.state == "none"' st
+# nixarchy says "succeeded" here, with invocation null (#44): no run is none.
 unit exited success 0 "";             check "status no invocation" '.state == "none"' st
 unit running success 0 "$id";         check "status running" '.state == "running" and .invocationId == "'"$id"'" and .ours and (.shown | not)' st
 unit start-pre success 0 "$id";       check "status starting" '.state == "running"' st

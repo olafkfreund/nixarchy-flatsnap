@@ -638,7 +638,14 @@ nixarchy_status() {
   jq -ce 'select(type == "object"
       and (.state | IN("none", "running", "succeeded", "failed"))
       and (.result | type == "string") and (.exit | type == "number")
-      and (.invocation == null or ((.invocation | type == "string") and (.invocation | test("^[0-9a-f]{32}$")))))' \
+      and (.invocation == null or ((.invocation | type == "string") and (.invocation | test("^[0-9a-f]{32}$")))))
+    # In the panel'"'"'s field names. No invocation is no run: nixarchy answers
+    # "succeeded" for SubState=exited without one (nixarchy-apply:61-73).
+    # ponytail: a stopped unit that kept its InvocationID still reads as a
+    # result, not none; nixarchy#986 item 3, and its JSON carries no
+    # SubState to correct it from here.
+    | {state: (if .invocation == null then "none" else .state end),
+       result, exit, invocationId: (.invocation // "")}' \
     <<<"$j" 2>/dev/null || die "$NIXARCHY_TOO_OLD"
 }
 
@@ -665,7 +672,7 @@ elevation() {
 # unit checks it all again under its own lock, which it holds through the
 # copy and the build: the lock cannot pass from this process to the unit.
 cmd_apply() {
-  local pf expect="" in_unit="" want sub id hash err fl
+  local pf expect="" in_unit="" want st id hash err fl
   while [ $# -gt 0 ]; do
     case $1 in
       --expect)
@@ -680,9 +687,8 @@ cmd_apply() {
   [ -z "$in_unit" ] || apply_in_unit "$expect"
   # Before preflight: a running build holds the state lock until it ends,
   # and preflight would wait on it and then fail with a lock message.
-  case $(unit_prop SubState) in
-    running | start*) die3 "a rebuild is already running — l shows it" ;;
-  esac
+  st=$(nixarchy_status) || { printf '%s\n' "$st"; exit 2; }
+  [ "$(jq -r .state <<<"$st")" != running ] || die3 "a rebuild is already running — l shows it"
   # Not a bare assignment: under set -e a failing $(...) would end the script
   # here with nothing on stdout, and the panel would have no error to show.
   pf=$(cmd_preflight) || { printf '%s\n' "$pf"; exit 2; }
@@ -702,18 +708,16 @@ cmd_apply() {
   # The flake preflight just evaluated, for the unit to rebuild.
   fl=$(flake) || die "$(flake_file) does not name an absolute path: $NIXARCHY_TOO_OLD"
   # A finished run is kept by RemainAfterExit; clear it, as --detach does.
-  sub=$(unit_prop SubState)
-  case $sub in
-    "" | dead) ;;
-    *) systemctl --user stop "$UNIT" 2>/dev/null || true
-       systemctl --user reset-failed "$UNIT" 2>/dev/null || true ;;
-  esac
+  # Always: a running one was refused above, and both are no-ops on a unit
+  # that is dead or gone.
+  systemctl --user stop "$UNIT" 2>/dev/null || true
+  systemctl --user reset-failed "$UNIT" 2>/dev/null || true
   jq -r '.changes[] | ({add: "+", remove: "−", change: "~"}[.op]) + " \(.store) \(.id)"
            + (if .detail == "" then "" else ": \(.detail)" end)' <<<"$pf"
   jq -r '.willRemove[] | "uninstallUnmanaged is on: this apply removes \(.)"' <<<"$pf"
   # The unit re-takes the lock; holding it here would only make it wait.
   exec {STATE_LOCK}>&-; STATE_LOCK=
-  # The unit's properties are --detach's (nixarchy-apply:49-58): no
+  # The unit's properties are --detach's (nixarchy-apply:118-127): no
   # NoNewPrivileges, since elevation goes through the setuid pkexec; no
   # rate limit on a bursty build log; no --collect, which unloads a failed
   # unit at once and then reads Result=success.
@@ -727,7 +731,8 @@ cmd_apply() {
     --setenv=NO_COLOR=1 \
     -- "$(readlink -f "$0")" apply --in-unit --expect "$hash" 2>&1) ||
     die3 "could not start the rebuild: ${err:-systemd-run failed}"
-  id=$(unit_prop InvocationID)
+  # Started either way: an unreadable status here costs the ID, not the run.
+  id=$(nixarchy_status 2>/dev/null | jq -r '.invocationId // ""' 2>/dev/null) || id=""
   echo "Rebuilding in the background. Follow it with: nixarchy-flatsnap apply-log --follow" >&2
   jq -nc --arg id "$id" '{nixarchyFlatsnapStarted: {invocationId: $id}}'
 }
@@ -769,13 +774,11 @@ apply_in_unit() {
   exit "$rc"
 }
 
-# The rebuild unit's state, as one JSON line. `none` is read from SubState
-# and InvocationID, never from Result: a unit that never ran reads
-# Result=success ExecMainStatus=0. `ours`: the marker names this run.
-# --ack <id> records that the panel has shown that run's result, the one
-# write here, and only to the marker.
+# The rebuild's state, as one JSON line: nixarchy's (nixarchy_status), plus
+# `ours`: the marker names this run. --ack <id> records that the panel has
+# shown that run's result, the one write here, and only to the marker.
 cmd_apply_status() {
-  local ack="" props sub res code id m mid mst=""
+  local ack="" st m mid mst=""
   case ${1:-} in
     "") ;;
     --ack) [[ ${2:-} =~ ^[0-9a-f]{32}$ ]] || die "--ack needs an invocation ID"; ack=$2 ;;
@@ -786,16 +789,10 @@ cmd_apply_status() {
   if [ -n "$ack" ] && [ "$mid" = "$ack" ]; then
     local tmp; tmp=$(mktemp "$m.XXXXXX"); printf '%s shown\n' "$ack" >"$tmp"; mv "$tmp" "$m"; mst=shown
   fi
-  props=$(systemctl --user show -p SubState,Result,ExecMainStatus,InvocationID "$UNIT" 2>/dev/null || true)
-  sub=$(sed -n 's/^SubState=//p' <<<"$props"); res=$(sed -n 's/^Result=//p' <<<"$props")
-  code=$(sed -n 's/^ExecMainStatus=//p' <<<"$props"); id=$(sed -n 's/^InvocationID=//p' <<<"$props")
-  jq -nc --arg sub "$sub" --arg res "$res" --arg code "$code" --arg id "$id" --arg mid "$mid" --arg mst "$mst" '
-    {state: (if $id == "" or $sub == "" or $sub == "dead" then "none"
-             elif $sub == "running" or ($sub | startswith("start")) then "running"
-             elif $sub == "exited" and $res == "success" then "succeeded"
-             else "failed" end),
-     result: $res, exit: (($code | tonumber?) // 0), invocationId: $id,
-     ours: ($id != "" and $mid == $id), shown: ($id != "" and $mid == $id and $mst == "shown")}'
+  st=$(nixarchy_status) || { printf '%s\n' "$st"; exit 2; }
+  jq -c --arg mid "$mid" --arg mst "$mst" '
+    . + {ours: (.invocationId != "" and $mid == .invocationId),
+         shown: (.invocationId != "" and $mid == .invocationId and $mst == "shown")}' <<<"$st"
 }
 
 # One run's log from the journal, from its start: the invocation ID keeps an
