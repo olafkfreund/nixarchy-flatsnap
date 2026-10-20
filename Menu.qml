@@ -4,6 +4,7 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Install a Flatpak or a Snap: paste, look, queue, apply. Keyboard only.
@@ -90,7 +91,7 @@ Item {
     wrapMode: Text.Wrap
     font.family: Style.font.family
     font.pixelSize: Style.font.title
-    color: Color.menu.text
+    color: Commons.Color.menu.text
   }
 
   // There is more below the edge: say so, or a warning at the end of
@@ -102,7 +103,7 @@ Item {
     width: moreText.implicitWidth + Style.space(12)
     height: moreText.implicitHeight
     radius: Style.cornerRadius
-    color: Color.menu.background
+    color: Commons.Color.menu.background
     Line { id: moreText; anchors.centerIn: parent; opacity: 0.7; text: "↓ more (j)" }
   }
 
@@ -117,7 +118,7 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
-    Rectangle { anchors.fill: parent; color: Color.menu.scrim }
+    Rectangle { anchors.fill: parent; color: Commons.Color.menu.scrim }
     MouseArea { anchors.fill: parent; onClicked: root.close() }
 
     BorderSurface {
@@ -126,8 +127,8 @@ Item {
       height: Math.min(Math.round(panel.height * 0.78), panel.height - Style.gapsOut * 2)
       anchors.horizontalCenter: parent.horizontalCenter
       y: Math.max(Style.gapsOut, Math.round((panel.height - height) / 2))
-      color: Color.menu.background
-      borderSpec: Border.surfaceSpec("menu", "border", Color.menu.border, Math.max(1, Style.space(2)))
+      color: Commons.Color.menu.background
+      borderSpec: Border.surfaceSpec("menu", "border", Commons.Color.menu.border, Math.max(1, Style.space(2)))
       padding: Style.spacing.panelPadding
       radius: Style.cornerRadius
 
@@ -224,7 +225,7 @@ Item {
           anchors { top: parent.top; left: parent.left; right: parent.right }
           placeholderText: "paste a Flathub / Snapcraft link, an app ID, or a snap name…"
           font.pixelSize: Style.font.title
-          foreground: Color.menu.text
+          foreground: Commons.Color.menu.text
         }
 
         Line {
@@ -288,7 +289,7 @@ Item {
             Line {
               width: parent.width
               readonly property var v: cardCol.c.verified
-              color: v == null ? Color.urgent : Color.menu.text
+              color: v == null ? Commons.Color.urgent : Commons.Color.menu.text
               text: "publisher: " + (cardCol.c.publisher || "unknown") + " — "
                     + (v === true ? "verified" + (cardCol.c.verifiedAs ? " (" + cardCol.c.verifiedAs + ")" : "")
                        : v === false ? "not verified by " + (cardCol.isSnap ? "the Snap Store" : "Flathub")
@@ -311,7 +312,7 @@ Item {
               width: parent.width
               Line {
                 width: parent.width
-                color: Color.urgent
+                color: Commons.Color.urgent
                 text: escBlock.notChecked ? "sandbox escapes: not checked (no list from nixarchy-flatsnap)" : "escapes its sandbox"
               }
               Line {
@@ -326,7 +327,7 @@ Item {
             Line {
               visible: !cardCol.isSnap
               width: parent.width
-              color: cardCol.c.permissions === null ? Color.urgent : Color.menu.text
+              color: cardCol.c.permissions === null ? Commons.Color.urgent : Commons.Color.menu.text
               text: fs.permissionText(cardCol.c.permissions)
             }
             Row {
@@ -338,7 +339,7 @@ Item {
                 width: cardView.width * 0.7
                 placeholderText: "Context.filesystems=xdg-pictures:ro  Environment.LC_ALL=C.UTF-8"
                 font.pixelSize: Style.font.title
-                foreground: Color.menu.text
+                foreground: Commons.Color.menu.text
                 text: fs.overrides
                 onTextChanged: fs.overrides = text
                 // p may land here below the edge: scroll just enough to show it.
@@ -362,13 +363,13 @@ Item {
             Line {
               visible: cardCol.isSnap && fs.classic
               width: parent.width
-              color: Color.urgent
+              color: Commons.Color.urgent
               text: "Classic: this snap runs without a sandbox, with everything your user can reach."
             }
             Line {
               visible: cardCol.isSnap
               width: parent.width
-              color: Color.urgent
+              color: Commons.Color.urgent
               text: "Snap confinement on NixOS is weaker than on Ubuntu: no AppArmor."
             }
             Line { text: "\nEnter queues it.  Nothing is installed until a applies."; width: parent.width }
@@ -397,11 +398,11 @@ Item {
             width: list.width
             height: rowText.implicitHeight + Style.space(8)
             radius: Style.cornerRadius
-            color: index === fs.cursor ? Color.menu.selectedBackground : "transparent"
+            color: index === fs.cursor ? Commons.Color.menu.selectedBackground : "transparent"
             Line {
               id: rowText
               anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: Style.space(8) }
-              color: index === fs.cursor ? Color.menu.selectedText : Color.menu.text
+              color: index === fs.cursor ? Commons.Color.menu.selectedText : Commons.Color.menu.text
               text: {
                 var d = modelData
                 var s = (d.store === "snap" ? "snap     " : "flatpak  ") + d.id
@@ -457,7 +458,7 @@ Item {
             width: parent.width
             visible: fs.message.length > 0
             text: fs.message
-            color: fs.armed ? Color.urgent : Color.menu.text
+            color: fs.armed ? Commons.Color.urgent : Commons.Color.menu.text
             // A prompt, not a status, by more than its colour (#26).
             Accessible.description: fs.armed ? "confirmation pending" : ""
           }
