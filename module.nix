@@ -53,10 +53,11 @@ in
     snaps = lib.mkOption {
       type = lib.types.listOf (lib.types.submodule {
         options = {
-          name = lib.mkOption { type = snapName; };
+          name = lib.mkOption { type = snapName; description = "Snap Store name of the snap."; };
           channel = lib.mkOption {
             type = lib.types.enum [ "stable" "candidate" "beta" "edge" ];
             default = "stable";
+            description = "Snap Store channel risk level to track.";
           };
           classic = lib.mkOption {
             type = lib.types.bool;
