@@ -34,7 +34,7 @@ Item {
     fs.reset()
     root.opened = true
     // During a build the panel opens on its log, and the keys go to Esc/l.
-    Qt.callLater(function () { if (fs.applying) root.focusKeys(); else field.forceActiveFocus() })
+    Qt.callLater(function () { if (fs.applying || fs.showingLog) root.focusKeys(); else field.forceActiveFocus() })
   }
   function close() { root.opened = false }
   function toggle() { if (root.opened) root.close(); else root.open("{}") }

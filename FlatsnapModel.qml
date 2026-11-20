@@ -49,6 +49,10 @@ Singleton {
   // is kept for the next open (the ack would otherwise mark it shown).
   property bool surfaceOpen: false
   property bool _unseenEnd: false
+  // A queue/remove result that landed while the menu was unloaded: said once on the next open.
+  property string _unseenNote: ""
+  // The run whose result was shown but whose ack may not be written yet.
+  property string _shownId: ""
 
   readonly property var rows: tab === 0 ? results : declared
   readonly property var current: rows.length > 0 ? rows[Math.min(cursor, rows.length - 1)] : null
@@ -77,7 +81,8 @@ Singleton {
   // while the build it lost goes on (#23).
   function reset() {
     var unseen = _unseenEnd; _unseenEnd = false
-    tab = 0; results = []; card = null; cursor = 0; message = ""
+    var note = _unseenNote; _unseenNote = ""
+    tab = 0; results = []; card = null; cursor = 0; message = note
     pendingDelete = ""; applyArmed = false; willRemove = []; showingLog = applying || unseen
     list()
     _queryStatus()
@@ -201,17 +206,17 @@ Singleton {
   // ---- the file --------------------------------------------------------
 
   property Process _writer: Process {
-    stdout: StdioCollector {
-      onStreamFinished: {
-        root.busy = false
-        var d = root._parse(text)
-        if (d.error) { root.message = d.error; return }
-        root.declared = d
-        root.message = root._after
-        root.card = null
-        root.pendingDelete = ""
-      }
-    }
+    stdout: StdioCollector { onStreamFinished: root._written(text) }
+  }
+  function _written(text) {
+    busy = false
+    var d = _parse(text)
+    if (d.error) { message = d.error; if (!surfaceOpen) _unseenNote = d.error; return }
+    declared = d
+    message = _after
+    if (!surfaceOpen) _unseenNote = _after
+    card = null
+    pendingDelete = ""
   }
   property string _after: ""
 
@@ -487,7 +492,7 @@ Singleton {
       return
     }
     // A result that ended while no panel watched: shown once, and only ours.
-    if (!applying && d.ours && !d.shown && (d.state === "succeeded" || d.state === "failed")) {
+    if (!applying && d.ours && !d.shown && d.invocationId !== _shownId && (d.state === "succeeded" || d.state === "failed")) {
       _invocation = d.invocationId; _head = []
       showingLog = true
       _finish(d)
@@ -519,6 +524,7 @@ Singleton {
     var l = _head.concat(lines)
     applyLog = l.length > 2000 ? l.slice(l.length - 2000) : l
     _ended(_pendingEnd)
+    _shownId = _invocation
     _ack.command = [script, "apply-status", "--ack", _invocation]
     _ack.running = true
     list()

@@ -396,6 +396,7 @@ ShellRoot {
     t.ok(tail(fs.applyLog) === "— apply failed (exit 4) —" && fs.applyLog.indexOf("error: boom") >= 0
          && fs.applyLog.indexOf("+ flatpak org.a.B") >= 0, "failed (exit 4): " + fs.applyLog.join(" | "))
     t.ok(fs._ack.command.slice(-3).join(" ") === "apply-status --ack " + id, "acks: " + fs._ack.command.join(" "))
+    fs._shownId = ""
     fs._onStatus({ state: "failed", invocationId: id, ours: true, shown: false, exit: 9, result: "signal" })
     t.ok(fs._pendingEnd === "apply failed (killed)", "a signal is killed, not an exit code: " + fs._pendingEnd)
 
@@ -410,9 +411,10 @@ ShellRoot {
     fs._stopWatching(); fs.card = null
 
     // 4: our run finished while no panel watched: shown once, then acked.
+    var id4 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     fs.showingLog = false; fs.applyLog = []; fs._invocation = ""
-    fs._onStatus({ state: "succeeded", invocationId: id, ours: true, shown: false, exit: 0, result: "success" })
-    t.ok(fs.showingLog && !fs.applying && fs._reload.command.slice(-1)[0] === id, "an unseen result opens the log")
+    fs._onStatus({ state: "succeeded", invocationId: id4, ours: true, shown: false, exit: 0, result: "success" })
+    t.ok(fs.showingLog && !fs.applying && fs._reload.command.slice(-1)[0] === id4, "an unseen result opens the log")
     fs._onReloaded("building\n")
     t.ok(tail(fs.applyLog) === "— applied —" && fs.applyLog[0] === "building", "applied, from the journal: " + fs.applyLog.join(" | "))
 
@@ -442,6 +444,23 @@ ShellRoot {
     fs.surfaceOpen = true; fs._ended("applied")
     fs.reset()
     t.ok(!fs.showingLog, "an end seen while open is not replayed")
+
+    // The ack is async: an open before it lands must not show the result twice.
+    var id8 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    fs.surfaceOpen = false; fs.applyLog = []; fs._reload.command = []; fs._invocation = id8; fs._pendingEnd = "applied"
+    fs._onReloaded("building\n")
+    fs.reset()
+    fs._onStatus({ state: "succeeded", invocationId: id8, ours: true, shown: false, exit: 0, result: "success" })
+    t.ok(fs._reload.command.length === 0 && fs.applyLog.filter(function (x) { return x === "— applied —" }).length === 1,
+         "ack pending: the result is not shown twice: " + fs.applyLog.join(" | "))
+
+    // A queue/remove result that ends while unloaded is said once on the next open.
+    fs.surfaceOpen = false; fs._after = "queued org.a.B"
+    fs._written("[]")
+    fs.reset()
+    t.ok(fs.message === "queued org.a.B", "unseen writer result shown on open: " + fs.message)
+    fs.reset()
+    t.ok(fs.message === "", "and only once: " + fs.message)
 
     console.log("model: " + t.pass + " passed, " + t.fail + " failed")
     Qt.exit(t.fail === 0 ? 0 : 1)
