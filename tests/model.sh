@@ -7,7 +7,7 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
-cp "$here/FlatsnapModel.qml" "$here/tests/model.qml" "$d/"
+cp "$here/FlatsnapModel.qml" "$here/qmldir" "$here/tests/model.qml" "$d/"
 cp -r "$here/bin" "$d/bin"
 # A writer that does get started must not touch the real flatsnap.nix.
 export XDG_CONFIG_HOME="$d/config" XDG_STATE_HOME="$d/state"
