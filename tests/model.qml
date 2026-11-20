@@ -16,7 +16,7 @@ ShellRoot {
     else { fail++; console.log("FAIL:", what) }
   }
 
-  FlatsnapModel { id: fs }
+  readonly property var fs: FlatsnapModel
   // What Menu.qml's announcement sees: `armed` as each message arrives (#26).
   property bool armedAtMessage: false
   Connections { target: fs; function onMessageChanged() { t.armedAtMessage = fs.armed } }
@@ -432,6 +432,16 @@ ShellRoot {
     t.ok(!fs.applying && tail(fs.applyLog) === "— a rebuild is already running — l shows it —",
          "already running: " + tail(fs.applyLog))
     t.ok(fs._status.command.slice(-1)[0] === "apply-status", "then asks the unit: " + fs._status.command.join(" "))
+
+    // An end that lands while no menu is showing is there at the next open.
+    fs.surfaceOpen = false; fs.applying = false; fs._ended("applied")
+    fs.reset()
+    t.ok(fs.showingLog && fs.applyLog.slice(-1)[0] === "— applied —", "unseen end: log shown on open")
+    fs.reset()
+    t.ok(!fs.showingLog, "an end is shown once")
+    fs.surfaceOpen = true; fs._ended("applied")
+    fs.reset()
+    t.ok(!fs.showingLog, "an end seen while open is not replayed")
 
     console.log("model: " + t.pass + " passed, " + t.fail + " failed")
     Qt.exit(t.fail === 0 ? 0 : 1)

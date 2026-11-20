@@ -41,7 +41,11 @@ Item {
   function focusKeys() { field.focus = false; ovField.focus = false; keys.forceActiveFocus() }
 
   // `typing`: the footer offers no letter key while a field would take it.
-  FlatsnapModel { id: fs; typing: field.activeFocus || ovField.activeFocus }
+  // The state is the FlatsnapModel singleton: this file is only a view of it.
+  readonly property var fs: FlatsnapModel
+  Binding { target: FlatsnapModel; property: "typing"; value: field.activeFocus || ovField.activeFocus }
+  Binding { target: FlatsnapModel; property: "surfaceOpen"; value: root.opened }
+  Component.onDestruction: { FlatsnapModel.surfaceOpen = false; FlatsnapModel.typing = false }
   // A build found by the status query on open arrives after open() has
   // placed the keyboard: move it to Esc/l then.
   Connections {

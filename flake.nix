@@ -46,6 +46,7 @@
               cp ${./manifest.json} "$out/manifest.json"
               cp ${./Menu.qml} "$out/Menu.qml"
               cp ${./FlatsnapModel.qml} "$out/FlatsnapModel.qml"
+              cp ${./qmldir} "$out/qmldir"
               cp ${./bin/nixarchy-flatsnap} "$out/bin/nixarchy-flatsnap"
               chmod +x "$out/bin/nixarchy-flatsnap"
             '';
@@ -93,7 +94,8 @@
             { nativeBuildInputs = [ pkgs.jq ]; }
             ''
               jq -e '.schemaVersion == 1 and .id == "nixarchy.flatsnap"
-                     and (.kinds | index("menu")) and .entryPoints.menu == "Menu.qml"' ${./manifest.json} >/dev/null
+                     and (.kinds | index("menu")) and .entryPoints.menu == "Menu.qml"
+                     and (has("keepLoaded") | not)' ${./manifest.json} >/dev/null
               touch "$out"
             '';
 

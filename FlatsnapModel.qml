@@ -1,10 +1,16 @@
+pragma Singleton
+
 import QtQuick
+import Quickshell
 import Quickshell.Io
 
 // State and the adapter. Every rule about what is allowed lives in
 // bin/nixarchy-flatsnap; this only runs it with an argv array (never a
 // shell string) and reads JSON back. Everything shown is plain text.
-QtObject {
+//
+// A singleton (qmldir), so the writer, the apply launcher and the result ack
+// outlive the menu being unloaded mid-action.
+Singleton {
   id: root
 
   readonly property string script:
@@ -39,6 +45,10 @@ QtObject {
   property bool applying: false
   property bool showingLog: false
   property bool _applyDone: false
+  // Menu.qml says whether it is showing; an end that lands while it is not
+  // is kept for the next open (the ack would otherwise mark it shown).
+  property bool surfaceOpen: false
+  property bool _unseenEnd: false
 
   readonly property var rows: tab === 0 ? results : declared
   readonly property var current: rows.length > 0 ? rows[Math.min(cursor, rows.length - 1)] : null
@@ -66,8 +76,9 @@ QtObject {
   // The unit is asked too: after a shell restart, `applying` starts false
   // while the build it lost goes on (#23).
   function reset() {
+    var unseen = _unseenEnd; _unseenEnd = false
     tab = 0; results = []; card = null; cursor = 0; message = ""
-    pendingDelete = ""; applyArmed = false; willRemove = []; showingLog = applying
+    pendingDelete = ""; applyArmed = false; willRemove = []; showingLog = applying || unseen
     list()
     _queryStatus()
   }
@@ -391,6 +402,7 @@ QtObject {
   // The end of an apply, also said in the message line when the log is hidden.
   function _ended(text) {
     _log("— " + text + " —")
+    if (!surfaceOpen) _unseenEnd = true
     if (!showingLog) message = text + " — l shows the log"
   }
 
